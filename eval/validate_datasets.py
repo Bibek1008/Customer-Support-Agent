@@ -183,6 +183,7 @@ def _validate_domain(
         "tasks_file": str(tasks_path),
         "task_count": 0,
         "splits": {},
+        "task_sets": {},
         "split_integrity": None,
     }
     if not folder.is_dir() or not tasks_path.is_file():
@@ -264,9 +265,185 @@ def _validate_domain(
         if overlap:
             errors.append(f"{domain}: train/test splits overlap on {len(overlap)} task IDs.")
         result["split_integrity"] = "valid" if not overlap else "overlap"
+        if "base" in normalized:
+            matches_base = (
+                set(normalized["train"]) | set(normalized["test"])
+            ) == set(normalized["base"])
+            result["train_test_union_matches_base"] = matches_base
+            if not matches_base:
+                errors.append(
+                    f"{domain}: train/test IDs do not exactly partition the base task set."
+                )
     else:
         result["split_integrity"] = "train/test split unavailable"
         warnings.append(f"{domain}: split file does not define both train and test.")
+
+    variant_names = ("base", "small", "full")
+    result["task_sets"] = {
+        name: len(normalized[name]) for name in variant_names if name in normalized
+    }
+    if "full" in normalized and set(normalized["full"]) != id_set:
+        errors.append(f"{domain}: full task set does not match tasks.json.")
+        result["full_task_set_matches_tasks_file"] = False
+    elif "full" in normalized:
+        result["full_task_set_matches_tasks_file"] = True
+
+    if domain == "telecom" and "small" in normalized:
+        small_path = folder / "tasks_small.json"
+        if not small_path.is_file():
+            errors.append("telecom: tasks_small.json is missing.")
+            result["small_task_file_matches_split"] = False
+        else:
+            try:
+                small_tasks = json.loads(small_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                errors.append(f"telecom: invalid tasks_small.json: {exc}")
+                result["small_task_file_matches_split"] = False
+            else:
+                small_ids = _task_ids(small_tasks, "telecom tasks_small.json", errors)
+                result["small_task_file_matches_split"] = (
+                    len(small_ids) == len(normalized["small"])
+                    and set(small_ids) == set(normalized["small"])
+                )
+                if not result["small_task_file_matches_split"]:
+                    errors.append(
+                        "telecom: tasks_small.json does not match the official small task set."
+                    )
+                result["small_task_set_overlap_with_base"] = len(
+                    set(normalized["small"]) & set(normalized.get("base", []))
+                )
+    return result
+
+
+def _validate_download_manifest(
+    benchmark_data: Path,
+    errors: list[str],
+) -> dict[str, Any]:
+    """Verify every downloaded payload file against the downloader's manifest."""
+    benchmark_root = benchmark_data.parent.parent
+    manifest_path = benchmark_root / "download_manifest.json"
+    result: dict[str, Any] = {
+        "path": str(manifest_path),
+        "exists": manifest_path.is_file(),
+        "entry_count": 0,
+        "verified_count": 0,
+        "missing_files": [],
+        "unexpected_files": [],
+        "invalid_entries": [],
+        "size_mismatches": [],
+        "sha256_mismatches": [],
+        "provenance": {},
+    }
+    if not manifest_path.is_file():
+        errors.append(f"Missing tau2 download manifest: {manifest_path}")
+        return result
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(f"Invalid tau2 download manifest {manifest_path}: {exc}")
+        return result
+    entries = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(entries, list):
+        errors.append(f"Invalid files list in tau2 download manifest {manifest_path}.")
+        return result
+
+    provenance_path = benchmark_root / "PROVENANCE.json"
+    if not provenance_path.is_file():
+        errors.append(f"Missing tau2 provenance file: {provenance_path}")
+    else:
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            errors.append(f"Invalid tau2 provenance file {provenance_path}: {exc}")
+        else:
+            if not isinstance(provenance, dict):
+                errors.append(f"Invalid tau2 provenance format in {provenance_path}.")
+            else:
+                result["provenance"] = {
+                    key: provenance.get(key)
+                    for key in ("repository", "commit", "license", "domains_acquired")
+                }
+                comparisons = (
+                    ("repository", "repository"),
+                    ("commit", "commit"),
+                    ("license", "license"),
+                )
+                for provenance_key, manifest_key in comparisons:
+                    if provenance.get(provenance_key) != manifest.get(manifest_key):
+                        errors.append(
+                            f"Tau2 provenance {provenance_key} does not match the download manifest."
+                        )
+                provenance_domains = provenance.get("domains_acquired")
+                manifest_domains = manifest.get("domains")
+                if not isinstance(provenance_domains, list) or not isinstance(
+                    manifest_domains, list
+                ):
+                    errors.append("Tau2 provenance or manifest domains are invalid.")
+                elif sorted(provenance_domains) != sorted(manifest_domains):
+                    errors.append(
+                        "Tau2 provenance domains do not match the download manifest."
+                    )
+
+    result["entry_count"] = len(entries)
+    declared_paths: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            result["invalid_entries"].append(str(entry))
+            continue
+        relative_name = entry.get("path")
+        size = entry.get("size_bytes")
+        expected_hash = entry.get("sha256")
+        if (
+            not isinstance(relative_name, str)
+            or not relative_name
+            or not isinstance(size, int)
+            or not isinstance(expected_hash, str)
+        ):
+            result["invalid_entries"].append(str(relative_name))
+            continue
+        relative_path = Path(*relative_name.replace("\\", "/").split("/"))
+        if relative_path.is_absolute() or ".." in relative_path.parts:
+            result["invalid_entries"].append(relative_name)
+            continue
+        normalized_name = relative_path.as_posix()
+        if normalized_name in declared_paths:
+            result["invalid_entries"].append(relative_name)
+            continue
+        declared_paths.add(normalized_name)
+        payload_path = benchmark_data / relative_path
+        if not payload_path.is_file():
+            result["missing_files"].append(normalized_name)
+            continue
+        payload_size = payload_path.stat().st_size
+        if payload_size != size:
+            result["size_mismatches"].append(normalized_name)
+            continue
+        digest = hashlib.sha256(payload_path.read_bytes()).hexdigest()
+        if digest != expected_hash.lower():
+            result["sha256_mismatches"].append(normalized_name)
+            continue
+        result["verified_count"] += 1
+
+    actual_paths = {
+        path.relative_to(benchmark_data).as_posix()
+        for path in benchmark_data.rglob("*")
+        if path.is_file()
+    }
+    result["unexpected_files"] = sorted(actual_paths - declared_paths)
+    if result["invalid_entries"]:
+        errors.append(
+            f"Tau2 download manifest contains {len(result['invalid_entries'])} invalid entries."
+        )
+    for field, label in (
+        ("missing_files", "missing"),
+        ("unexpected_files", "unexpected"),
+        ("size_mismatches", "size-mismatched"),
+        ("sha256_mismatches", "SHA-256-mismatched"),
+    ):
+        if result[field]:
+            errors.append(
+                f"Tau2 download manifest has {len(result[field])} {label} payload files."
+            )
     return result
 
 
@@ -292,6 +469,7 @@ def validate_datasets(
 
     json_files = sorted(benchmark_data.rglob("*.json")) if benchmark_data.is_dir() else []
     valid_json_count = _check_json_files(json_files, errors)
+    download_manifest = _validate_download_manifest(benchmark_data, errors)
     domains = [
         _validate_domain(domain, benchmark_data, errors, warnings)
         for domain in _DOMAINS
@@ -385,6 +563,17 @@ def validate_datasets(
                                 errors.append(
                                     f"Official subset {subset_path} references unknown domain task IDs."
                                 )
+                            split_path = benchmark_data / "domains" / domain / "split_tasks.json"
+                            if split_path.is_file():
+                                split_data = json.loads(
+                                    split_path.read_text(encoding="utf-8")
+                                )
+                                subset_result["overlap_with_splits"] = {
+                                    split_name: len(set(task_ids) & set(split_ids))
+                                    for split_name, split_ids in split_data.items()
+                                    if isinstance(split_ids, list)
+                                    and split_name in {"train", "test", "base"}
+                                }
             manifest_results[-1]["task_subsets"].append(subset_result)
 
     all_files = (
@@ -404,6 +593,7 @@ def validate_datasets(
             "external_data_bytes": sum(file.stat().st_size for file in all_files),
             "external_json_files_valid": valid_json_count,
             "external_json_files_total": len(json_files),
+            "download_manifest_files_verified": download_manifest["verified_count"],
         },
         "heldout_dataset": ticket_data,
         "knowledge_base_documents": kb_data,
@@ -416,6 +606,7 @@ def validate_datasets(
             ],
             "manifests": manifest_results,
             "domains": domains,
+            "download_manifest": download_manifest,
         },
         "errors": errors,
         "warnings": warnings,
@@ -444,20 +635,51 @@ def write_reports(report: dict[str, Any], json_path: Path, markdown_path: Path) 
             f"{report['summary']['external_json_files_valid']}/"
             f"{report['summary']['external_json_files_total']}"
         ),
+        (
+            f"- **Verified downloaded files:** "
+            f"{report['external_benchmark']['download_manifest']['verified_count']}/"
+            f"{report['external_benchmark']['download_manifest']['entry_count']} "
+            "(size and SHA-256)"
+        ),
         "",
         "## Domain task and split counts",
         "",
-        "| Domain | Tasks | Train | Test | Split integrity |",
-        "|---|---:|---:|---:|---|",
+        "| Domain | Root task records | Train | Test | Other official sets | Split integrity |",
+        "|---|---:|---:|---:|---|---|",
     ]
     for domain in report["external_benchmark"]["domains"]:
         splits = domain["splits"]
         train = splits.get("train", {}).get("task_count", "n/a")
         test = splits.get("test", {}).get("task_count", "n/a")
+        task_sets = ", ".join(
+            f"{name}: {count}"
+            for name, count in domain.get("task_sets", {}).items()
+        ) or "none"
         lines.append(
             f"| {domain['domain']} | {domain['task_count']} | {train} | {test} "
-            f"| {domain['split_integrity']} |"
+            f"| {task_sets} | {domain['split_integrity']} |"
         )
+    lines.extend(
+        [
+            "",
+            (
+                "Root `tasks.json` counts, split IDs, named task sets, and frozen benchmark "
+                "subsets are alternate views of task IDs; do not add their counts together."
+            ),
+            "",
+            "## Frozen benchmark task subsets",
+            "",
+            "| Domain | Subset | IDs | Train overlap | Test overlap |",
+            "|---|---|---:|---:|---:|",
+        ]
+    )
+    for manifest in report["external_benchmark"]["manifests"]:
+        for subset in manifest.get("task_subsets", []):
+            overlap = subset.get("overlap_with_splits", {})
+            lines.append(
+                f"| {subset['domain']} | {subset['name']} | {subset['task_count']} "
+                f"| {overlap.get('train', 'n/a')} | {overlap.get('test', 'n/a')} |"
+            )
     lines.extend(["", "## Errors", ""])
     lines.extend([f"- {error}" for error in report["errors"]] or ["- None."])
     lines.extend(["", "## Warnings", ""])

@@ -65,9 +65,9 @@ hundreds of individual document files.
 | `domains/retail/policy.md` | 1 policy document | 6,699 bytes | Markdown | Retail domain rules | Evaluation environment |
 | `domains/retail/split_tasks.json` | Train 74, test 40, base 114 IDs | 3,263 bytes | JSON | Official disjoint task split definitions | Test split only in this project's runner |
 | `domains/retail/task_issues/*.json` | 3 referenced simulation/issue records | 26,303,418 bytes | JSON | Public issue annotations referenced by retail tasks | Benchmark metadata |
-| `domains/telecom/tasks.json` | 2,285 tasks | 13,977,063 bytes | JSON | Telecom tasks, including full and reduced task sets | Test evaluation only in this project's runner |
-| `domains/telecom/tasks_small.json` | 20 tasks | 83,833 bytes | JSON | Small official task subset | Evaluation |
-| `domains/telecom/split_tasks.json` | train 74, test 40, base 114, small 20, full 2,285 IDs | 356,149 bytes | JSON | Official split definitions | Test split only in this project's runner |
+| `domains/telecom/tasks.json` | 2,285 unique task records (`full`) | 13,977,063 bytes | JSON | Canonical telecom task records referenced by the named task sets | Evaluation source; not a 2,285-task test split |
+| `domains/telecom/tasks_small.json` | 20 task records (`small`) | 83,833 bytes | JSON | Separate small task set; IDs match `split_tasks.json` `small` | Evaluation set |
+| `domains/telecom/split_tasks.json` | train 74, test 40, base 114, small 20, full 2,285 IDs | 356,149 bytes | JSON | Official train/test split and named task-set IDs | Runner selects only `test` |
 | `domains/telecom/db.toml`, `user_db.toml` | 53 records across state tables | 10,561 bytes | TOML | Telecom benchmark environment state | Evaluation environment |
 | `domains/telecom/*.md` | 5 policy/manual/workflow documents | 60,348 bytes | Markdown | Telecom domain policy and troubleshooting references | Evaluation environment |
 | `domains/telecom/workflows/*` | 10 workflow assets | See `download_manifest.json` | DOT, PDF, PNG and Python | Official telecom workflow material | Evaluation support data |
@@ -86,18 +86,43 @@ the current official banking release is voice-only. Its 97 tasks have no
 
 ### Official task/split counts
 
-| Domain | Full task records | Train | Test | Other official split information |
+| Domain | Root `tasks.json` records | Train | Test | Other official task sets |
 |---|---:|---:|---:|---|
 | Airline | 50 | 30 | 20 | `base`: 50 |
 | Retail | 114 | 74 | 40 | `base`: 114 |
 | Telecom | 2,285 | 74 | 40 | `base`: 114; `small`: 20; `full`: 2,285 |
 | Banking knowledge | 97 | Not defined | Not defined | Frozen `banking_knowledge_97` set; official release is voice-only |
 
-Train/test IDs in airline, retail, and telecom are disjoint and refer to existing
-task IDs. `eval.tau2_bench_adapter` selects only the official `test` split.
-Those are native tau2 custom text runs over official test IDs, not the
-multilingual released `text-v1` leaderboard frame. The official frozen task
-subsets are separately retained and hash-checked.
+Counts in the table are different views of task IDs; **do not sum root task
+records, train/test IDs, named sets, or frozen subsets as if they were separate
+records**. For telecom specifically:
+
+- The root `tasks.json` has 2,285 unique records, and `full` contains those same
+  2,285 task IDs.
+- `train` (74) and `test` (40) are disjoint and together exactly equal `base`
+  (114). This is the official standard split used by this project's runner.
+- `small` has 20 task IDs, mirrored by `tasks_small.json`; it is disjoint from
+  `base` but is also contained in `full`. It is not an additional 20 tasks to
+  add to the root total.
+- The frozen `telecom_50` manifest subset is a separate benchmark selection of
+  50 IDs, overlapping the standard split with 27 train IDs and 23 test IDs. It
+  is not another 50 unique telecom tasks and is not the runner's 40-task test
+  split.
+
+The airline and retail `base` sets are also exactly the union of their
+disjoint train/test splits. Frozen subsets are retained and hash-checked
+separately; the downloaded manifest verifies all 851 acquired file sizes and
+SHA-256 hashes against the payload. The current report records task-set counts
+and frozen-subset overlaps to make these distinctions visible.
+
+Banking knowledge has 97 tasks but no official train/test split. Its official
+banking manifest is voice-only; the text runner does not treat the full 97
+records as a test split.
+
+`eval.tau2_bench_adapter` selects only the official standard `test` split for
+airline (20), retail (40), and telecom (40). Those are native tau2 custom text
+runs over official test IDs, not the multilingual released `text-v1`
+leaderboard frame.
 
 ## Evaluation and production separation
 

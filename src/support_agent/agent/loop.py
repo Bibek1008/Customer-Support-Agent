@@ -56,7 +56,12 @@ def run_turn(
     # 1. Redact PII before anything (model or logs) sees the input.
     redacted = get_redactor().redact(user_message)
     incoming = Message(role=Role.USER, content=redacted.text)
-    prior = list(history or [])
+    prior = [
+        message.model_copy(
+            update={"content": get_redactor().redact(message.content).text}
+        )
+        for message in history or []
+    ]
     trace.messages = [*prior, incoming]
 
     # 2. Input guardrail: disallowed or out of scope -> refuse without a loop.
@@ -115,9 +120,24 @@ def run_turn(
             outcome = _run_tool(block, trace)
             if outcome.is_handoff:
                 handoff_reason = outcome.handoff_reason
-            citations.extend(outcome.citations)
-            # Quarantine the tool output before the model reads it.
-            quarantined = quarantine_tool_output(block.name, outcome.text or "(no output)")
+            redactor = get_redactor()
+            citations.extend(
+                citation.model_copy(
+                    update={
+                        "source_id": redactor.redact(citation.source_id).text,
+                        "source_title": redactor.redact(citation.source_title).text,
+                        "url": (
+                            redactor.redact(citation.url).text
+                            if citation.url is not None
+                            else None
+                        ),
+                        "chunk": redactor.redact(citation.chunk).text,
+                    }
+                )
+                for citation in outcome.citations
+            )
+            safe_tool_output = redactor.redact(outcome.text or "(no output)").text
+            quarantined = quarantine_tool_output(block.name, safe_tool_output)
             tool_results.append(
                 {
                     "type": "tool_result",

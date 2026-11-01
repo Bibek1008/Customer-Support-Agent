@@ -16,6 +16,10 @@ def test_local_and_official_datasets_validate():
     assert report["summary"]["external_json_files_valid"] == report["summary"][
         "external_json_files_total"
     ]
+    assert report["summary"]["download_manifest_files_verified"] == 851
+    assert report["external_benchmark"]["download_manifest"]["provenance"][
+        "commit"
+    ] == "da0835f6c67baef58bdda18f2a3b037dfb3a1754"
     subsets = {
         subset["name"]: subset
         for manifest in report["external_benchmark"]["manifests"]
@@ -29,10 +33,30 @@ def test_local_and_official_datasets_validate():
     assert domains["airline"]["splits"]["test"]["task_count"] == 20
     assert domains["retail"]["splits"]["test"]["task_count"] == 40
     assert domains["telecom"]["splits"]["test"]["task_count"] == 40
+    assert domains["telecom"]["task_count"] == 2285
+    assert domains["telecom"]["task_sets"] == {
+        "base": 114,
+        "small": 20,
+        "full": 2285,
+    }
+    assert domains["telecom"]["train_test_union_matches_base"]
+    assert domains["telecom"]["small_task_file_matches_split"]
+    assert domains["telecom"]["small_task_set_overlap_with_base"] == 0
     assert domains["banking_knowledge"]["task_count"] == 97
     assert domains["banking_knowledge"]["split_integrity"] == (
         "no official train/test split file"
     )
+    telecom_frozen = next(
+        subset
+        for manifest in report["external_benchmark"]["manifests"]
+        for subset in manifest["task_subsets"]
+        if subset["name"] == "telecom_50"
+    )
+    assert telecom_frozen["overlap_with_splits"] == {
+        "train": 27,
+        "test": 23,
+        "base": 50,
+    }
 
 
 def test_ticket_validation_reports_duplicate_ids_and_missing_values(tmp_path):

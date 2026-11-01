@@ -61,6 +61,48 @@ def test_resolve_path(make_client, monkeypatch):
     assert trace.total_usd() > 0
 
 
+def test_tool_output_pii_is_redacted_before_model_request(make_client, monkeypatch):
+    sensitive_text = "Contact jane.doe@acme.com about SSN 123-45-6789."
+    citation = Citation(
+        source_id="case-123456789",
+        source_title="Account record",
+        url=None,
+        chunk=sensitive_text,
+        score=0.8,
+    )
+    monkeypatch.setattr(
+        loop_mod,
+        "dispatch",
+        lambda name, inp: ToolOutcome(text=sensitive_text, citations=[citation]),
+    )
+    monkeypatch.setattr(loop_mod, "score_confidence", lambda **_: _Conf(0.9))
+    client = make_client(
+        [
+            FakeResponse(
+                content=[
+                    ToolUseBlock(
+                        id="sensitive-tool",
+                        name="knowledge_base",
+                        input={"query": "account"},
+                    )
+                ],
+                stop_reason="tool_use",
+            ),
+            FakeResponse(content=[TextBlock("The account record is available.")], stop_reason="end_turn"),
+        ]
+    )
+    monkeypatch.setattr(loop_mod, "get_client", lambda: client)
+
+    trace = loop_mod.run_turn(conversation_id="pii-tool", user_message="Check my account")
+
+    second_request = str(client.messages.calls[1]["messages"])
+    assert "jane.doe@acme.com" not in second_request
+    assert "123-45-6789" not in second_request
+    assert "123456789" not in second_request
+    assert "jane.doe@acme.com" not in str(trace.decision.citations)
+    assert "123-45-6789" not in str(trace.decision.citations)
+
+
 def test_low_confidence_hands_off(make_client, monkeypatch):
     monkeypatch.setattr(
         loop_mod, "dispatch", lambda name, inp: ToolOutcome(text="ambiguous", citations=[])

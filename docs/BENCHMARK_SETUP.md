@@ -35,6 +35,15 @@ acquires those pinned task-subset manifests, but the standalone runner below
 uses the explicitly defined train/test splits instead of claiming an official
 multilingual leaderboard score.
 
+Telecom has 2,285 unique records in `domains/telecom/tasks.json` (`full`), a
+standard `base` set of 114 split into 74 train and 40 test, and a separate
+20-task `small` set. `small` is disjoint from `base` but is already included
+in `full`; these counts are alternative views and must not be added together.
+The frozen `telecom_50` task subset overlaps the standard split (27 train, 23
+test) and is not the runner's 40-task test set. See
+[`DATASET_DOCUMENTATION.md`](./DATASET_DOCUMENTATION.md) for all domains'
+task-set relationships and validation results.
+
 The banking manifest (`banking.json`) defines the released
 `voice-v2-banking` benchmark. It has 97 tasks and no train/test split. Its data
 is available for validation and inspection, but this text-only runner refuses
