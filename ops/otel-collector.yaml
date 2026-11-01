@@ -1,0 +1,31 @@
+# Minimal OpenTelemetry Collector config: receive OTLP over HTTP from the
+# gateway, batch, and export to Langfuse's OTLP endpoint. Swap the exporter for
+# Arize Phoenix or any OTLP-compatible backend without touching app code.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 2s
+
+exporters:
+  # Langfuse ingests OTLP directly. Point this at your backend.
+  otlphttp/langfuse:
+    endpoint: http://langfuse:3000/api/public/otel
+    headers:
+      # Basic auth from your Langfuse project keys, provided at runtime.
+      Authorization: ${env:LANGFUSE_OTLP_AUTH}
+  # Uncomment to also print spans to the collector log while developing.
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/langfuse, debug]
