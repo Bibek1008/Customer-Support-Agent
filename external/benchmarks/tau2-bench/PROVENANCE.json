@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/sierra-research/tau2-bench",
+  "commit": "da0835f6c67baef58bdda18f2a3b037dfb3a1754",
+  "release": "main at pinned commit; tau2 package version 2.0.0",
+  "license": "MIT",
+  "download_date": "2026-11-01",
+  "domains_acquired": [
+    "retail",
+    "airline",
+    "telecom",
+    "banking_knowledge"
+  ],
+  "downloaded_files": [
+    "data/tau2/benchmarks/text.json",
+    "data/tau2/benchmarks/banking.json",
+    "data/tau2/task_subsets/airline_50.json",
+    "data/tau2/task_subsets/retail_50.json",
+    "data/tau2/task_subsets/telecom_50.json",
+    "data/tau2/task_subsets/banking_knowledge_97.json",
+    "data/tau2/domains/airline/",
+    "data/tau2/domains/retail/",
+    "data/tau2/domains/telecom/",
+    "data/tau2/domains/banking_knowledge/"
+  ],
+  "excluded": [
+    "voice tasks and audio difficulty files",
+    "model weights",
+    "voice assets",
+    "unselected benchmark domains and simulation results"
+  ],
+  "download_script": "eval/download_tau2_bench.ps1"
+}
