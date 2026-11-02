@@ -24,20 +24,23 @@ try:
     import anthropic
 
     _ANTHROPIC_AVAILABLE = True
-except Exception:  # pragma: no cover - the SDK may be absent in a bare test env
+except ImportError:  # pragma: no cover - the SDK may be absent in a bare test env
     _ANTHROPIC_AVAILABLE = False
 
 
 @lru_cache
-def get_client() -> "anthropic.Anthropic":
-    """Return a cached Anthropic client. The key is read from the environment
-    by the SDK (or from our settings), never hardcoded."""
+def get_client():
+    """Return the configured provider's client; credentials come from settings."""
+    settings = get_settings()
+    if settings.llm_provider == "groq":
+        from support_agent.agent.groq_client import GroqClient
+
+        return GroqClient(settings.groq_api_key)
     if not _ANTHROPIC_AVAILABLE:
         raise RuntimeError(
             "The 'anthropic' package is not installed. Install dependencies to "
             "run the agent loop."
         )
-    settings = get_settings()
     # The SDK falls back to ANTHROPIC_API_KEY in the environment; we pass ours
     # explicitly only when it is set, so a profile-based login still works.
     if settings.anthropic_api_key:
@@ -52,6 +55,8 @@ def reasoner_kwargs() -> dict[str, Any]:
     ``temperature``; both return 400 on this model.
     """
     settings = get_settings()
+    if settings.llm_provider == "groq":
+        return {"model": settings.groq_model, "max_tokens": min(settings.max_output_tokens, 2048)}
     return {
         "model": settings.agent_model,
         "max_tokens": settings.max_output_tokens,
@@ -66,6 +71,8 @@ def classifier_kwargs() -> dict[str, Any]:
     Used for the confidence score and the tone judge. Small output, structured.
     """
     settings = get_settings()
+    if settings.llm_provider == "groq":
+        return {"model": settings.groq_model, "max_tokens": 2048}
     return {
         "model": settings.classifier_model,
         "max_tokens": 512,

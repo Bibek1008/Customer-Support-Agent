@@ -3,6 +3,7 @@
 # Keep in sync with pyproject.toml.
 
 anthropic>=0.116
+langfuse==5.1.0
 fastapi>=0.115
 uvicorn[standard]>=0.30
 pydantic>=2.7

@@ -29,7 +29,12 @@ from support_agent.guardrails import refusal
 from support_agent.guardrails.injection import quarantine_tool_output
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.cost import cost_from_usage
-from support_agent.observability.tracing import model_span, tool_span
+from support_agent.observability.tracing import (
+    model_span,
+    record_request_input,
+    tool_span,
+    trace_turn,
+)
 from support_agent.schemas import (
     Citation,
     Decision,
@@ -43,6 +48,7 @@ from support_agent.tools import handoff as handoff_tool
 from support_agent.tools.registry import TOOL_SCHEMAS, dispatch
 
 
+@trace_turn
 def run_turn(
     conversation_id: str,
     user_message: str,
@@ -55,11 +61,10 @@ def run_turn(
 
     # 1. Redact PII before anything (model or logs) sees the input.
     redacted = get_redactor().redact(user_message)
+    record_request_input(redacted.text)
     incoming = Message(role=Role.USER, content=redacted.text)
     prior = [
-        message.model_copy(
-            update={"content": get_redactor().redact(message.content).text}
-        )
+        message.model_copy(update={"content": get_redactor().redact(message.content).text})
         for message in history or []
     ]
     trace.messages = [*prior, incoming]
@@ -79,7 +84,18 @@ def run_turn(
 
     for _ in range(settings.max_agent_steps):
         kwargs = reasoner_kwargs()
-        with model_span(kwargs["model"], effort=kwargs["output_config"]["effort"]) as span:
+        with model_span(
+            kwargs["model"],
+            effort=kwargs.get("output_config", {}).get("effort"),
+            input=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+        ) as span:
+            span.update(
+                metadata={"tools": TOOL_SCHEMAS},
+                model_parameters={
+                    "max_tokens": kwargs["max_tokens"],
+                    "reasoning_effort": kwargs.get("output_config", {}).get("effort", "low"),
+                },
+            )
             resp = get_client().messages.create(
                 **kwargs,
                 system=SYSTEM_PROMPT,
@@ -88,9 +104,8 @@ def run_turn(
             )
             cost = cost_from_usage(kwargs["model"], resp.usage)
             span.record_cost(cost)
-        trace.spans.append(
-            SpanRecord(name=f"chat {kwargs['model']}", kind="model", cost=cost)
-        )
+            span.record_response(resp)
+        trace.spans.append(SpanRecord(name=f"chat {kwargs['model']}", kind="model", cost=cost))
 
         if resp.stop_reason == "refusal":
             # The model declined for safety reasons; escalate rather than retry.
@@ -127,9 +142,7 @@ def run_turn(
                         "source_id": redactor.redact(citation.source_id).text,
                         "source_title": redactor.redact(citation.source_title).text,
                         "url": (
-                            redactor.redact(citation.url).text
-                            if citation.url is not None
-                            else None
+                            redactor.redact(citation.url).text if citation.url is not None else None
                         ),
                         "chunk": redactor.redact(citation.chunk).text,
                     }
@@ -165,8 +178,15 @@ def run_turn(
 def _run_tool(block, trace: Trace):
     """Dispatch one tool call, recording a span."""
     tool_input = block.input if isinstance(block.input, dict) else json.loads(block.input)
-    with tool_span(block.name) as span:
+    with tool_span(block.name, input=tool_input) as span:
         outcome = dispatch(block.name, tool_input)
+        span.update(
+            output={
+                "text": outcome.text,
+                "citations": [c.model_dump() for c in outcome.citations],
+                "handoff": outcome.is_handoff,
+            }
+        )
         span.set("gen_ai.tool.citations", len(outcome.citations))
         span.set("gen_ai.tool.handoff", outcome.is_handoff)
     trace.spans.append(SpanRecord(name=f"tool {block.name}", kind="tool"))
@@ -181,9 +201,7 @@ def _finalize(
     customer_id: str | None,
 ) -> Decision:
     settings = get_settings()
-    question = next(
-        (m.content for m in reversed(trace.messages) if m.role == Role.USER), ""
-    )
+    question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
 
     # If the model escalated, or produced no answer, hand off directly.
     if handoff_reason is not None or not answer_text:
@@ -243,12 +261,14 @@ def _handoff(
     threshold: float,
     customer_id: str | None,
 ) -> Decision:
-    result = handoff_tool.escalate_to_human(
-        reason=reason,
-        transcript=trace.messages,
-        confidence=confidence,
-        customer_id=customer_id,
-    )
+    with tool_span("escalate_to_human", input={"reason": reason, "confidence": confidence}) as span:
+        result = handoff_tool.escalate_to_human(
+            reason=reason,
+            transcript=trace.messages,
+            confidence=confidence,
+            customer_id=customer_id,
+        )
+        span.update(output={"ticket_id": result.ticket_id, "message": result.text})
     trace.messages.append(Message(role=Role.ASSISTANT, content=result.text))
     trace.spans.append(SpanRecord(name="handoff", kind="tool", attributes={"reason": reason}))
     return Decision(

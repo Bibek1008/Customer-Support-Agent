@@ -61,37 +61,38 @@ class HandoffDecision:
     reason: str
 
 
-def score_confidence(
-    question: str, answer: str, citations: list[Citation]
-) -> ConfidenceResult:
+def score_confidence(question: str, answer: str, citations: list[Citation]) -> ConfidenceResult:
     """Score how well ``answer`` is supported by ``citations``."""
-    sources = "\n\n".join(
-        f"[{i + 1}] {c.source_title}: {c.chunk}" for i, c in enumerate(citations)
-    ) or "(no sources were retrieved)"
-
-    user_block = (
-        f"QUESTION:\n{question}\n\nANSWER:\n{answer}\n\nRETRIEVED SOURCES:\n{sources}"
+    sources = (
+        "\n\n".join(f"[{i + 1}] {c.source_title}: {c.chunk}" for i, c in enumerate(citations))
+        or "(no sources were retrieved)"
     )
 
+    user_block = f"QUESTION:\n{question}\n\nANSWER:\n{answer}\n\nRETRIEVED SOURCES:\n{sources}"
+
     kwargs = classifier_kwargs()
-    with model_span(kwargs["model"]) as span:
+    with model_span(
+        kwargs["model"],
+        name="score-confidence",
+        input=[
+            {"role": "system", "content": _CONFIDENCE_INSTRUCTIONS},
+            {"role": "user", "content": user_block},
+        ],
+    ) as span:
         resp = get_client().messages.create(
             **kwargs,
             system=_CONFIDENCE_INSTRUCTIONS,
-            output_config={
-                "format": {"type": "json_schema", "schema": _CONFIDENCE_SCHEMA}
-            },
+            output_config={"format": {"type": "json_schema", "schema": _CONFIDENCE_SCHEMA}},
             messages=[{"role": "user", "content": user_block}],
         )
         cost = cost_from_usage(kwargs["model"], resp.usage)
         span.record_cost(cost)
+        span.record_response(resp)
 
     text = next((b.text for b in resp.content if b.type == "text"), "{}")
     data = json.loads(text)
     score = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
-    return ConfidenceResult(
-        score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd
-    )
+    return ConfidenceResult(score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd)
 
 
 def decide_handoff(confidence: float, threshold: float | None = None) -> HandoffDecision:
@@ -103,6 +104,4 @@ def decide_handoff(confidence: float, threshold: float | None = None) -> Handoff
         if handoff
         else f"confidence {confidence:.2f} meets the handoff threshold {tau:.2f}"
     )
-    return HandoffDecision(
-        handoff=handoff, threshold=tau, confidence=confidence, reason=reason
-    )
+    return HandoffDecision(handoff=handoff, threshold=tau, confidence=confidence, reason=reason)

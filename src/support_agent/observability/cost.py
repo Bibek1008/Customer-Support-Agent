@@ -27,6 +27,9 @@ class Rate:
 # 2026-08-31; the standard rate is used here so cost is never understated. Swap
 # to the intro rate only for runs you know fall inside the intro window.
 MODEL_RATES: dict[str, Rate] = {
+    # Groq published list rates: https://console.groq.com/docs/model/openai/gpt-oss-20b
+    # For Groq this is a list-price equivalent, not the bill on a Free plan.
+    "openai/gpt-oss-20b": Rate(input_per_mtok=0.075, output_per_mtok=0.30),
     "claude-opus-4-8": Rate(input_per_mtok=5.00, output_per_mtok=25.00),
     "claude-sonnet-5": Rate(input_per_mtok=3.00, output_per_mtok=15.00),
     "claude-haiku-4-5": Rate(input_per_mtok=1.00, output_per_mtok=5.00),

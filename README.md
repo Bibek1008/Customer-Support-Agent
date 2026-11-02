@@ -1,5 +1,113 @@
 # Production customer-support agent
 
+## Free local development with Groq and Neon
+
+Use a Groq account on its Free plan for chat and confidence scoring, FastEmbed
+for CPU embeddings, and a Neon Free project for PostgreSQL. Groq and Neon usage
+limits still apply; this is not unlimited hosted inference. No Anthropic or
+OpenAI API key is needed for this configuration. There is no paid-provider fallback.
+
+Install the additional local embedding dependency:
+
+```powershell
+uv pip install --python .venv/Scripts/python.exe -e ".[dev,pii,free]"
+```
+
+Set these values in your git-ignored `.env`. Create a replacement Groq key if
+you have shared your previous key publicly or in chat; never commit credentials.
+
+```dotenv
+LLM_PROVIDER=groq
+GROQ_API_KEY=your-replacement-key
+GROQ_MODEL=openai/gpt-oss-20b
+EMBEDDING_PROVIDER=fastembed
+EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+EMBEDDING_DIM=384
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/neondb?sslmode=require
+SAFETY_MODEL_URL=
+TRACING_ENABLED=0
+```
+
+Run `CREATE EXTENSION IF NOT EXISTS vector;` in Neon's SQL Editor first.
+Use a fresh database if you previously created `kb_chunks` with a different
+embedding dimension: changing this setting does not migrate existing vectors.
+The first embedding call downloads the model to `.cache/fastembed`; subsequent
+embedding calls run locally without an API key or a GPU.
+
+Add your support documents under `knowledge_base/approved`, then run:
+
+```powershell
+.venv/Scripts/python.exe -m support_agent.kb.ingest
+.venv/Scripts/python.exe -m uvicorn support_agent.server:app --host 127.0.0.1 --port 8000
+```
+
+Open http://127.0.0.1:8000/docs to send a `POST /chat` request. For a local test,
+you can explicitly ingest `--docs eval/datasets/kb_docs` instead of production
+documents. Check `get_store()._use_db` before relying on persistence: the existing
+store falls back to memory if its database setup fails, and CLI ingestion into
+memory does not survive the command exiting. Local ticketing is also in memory.
+
+This development setup skips the optional Llama Guard safety classifier and span
+export; PII redaction and injection filtering still run. Groq token usage is
+recorded with its published list-price equivalent in `cost_usd`; it is not a bill
+for your Free plan. Keep your Groq account on the Free plan for free-tier usage.
+See [Groq limits](https://console.groq.com/docs/rate-limits) and
+[model details](https://console.groq.com/docs/model/openai/gpt-oss-20b).
+
+## Optional Gemini embeddings
+
+Gemini is also available for hosted embeddings. Set `EMBEDDING_PROVIDER=gemini`,
+`EMBEDDING_MODEL=gemini-embedding-001`, `EMBEDDING_DIM=384`, and `GEMINI_API_KEY`
+in `.env`. This works with the existing 384-dimension local-development table.
+Re-embed every document before serving requests with a new embedding model;
+matching dimensions alone do not make embeddings compatible. Gemini uses
+`RETRIEVAL_DOCUMENT` for ingestion and `RETRIEVAL_QUERY` for searches, with
+L2 normalization. Free-tier quotas apply; see
+[Google's pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+## Langfuse tracing
+
+The application uses Langfuse Python SDK **5.1.0**. Put your project keys and
+regional URL in the git-ignored `.env`, then restart the API:
+
+```dotenv
+TRACING_ENABLED=1
+LANGFUSE_PUBLIC_KEY=your-project-public-key
+LANGFUSE_SECRET_KEY=your-project-secret-key
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENVIRONMENT=development
+```
+
+Use your project's actual regional URL (for example `https://us.cloud.langfuse.com`
+for a US project). With these settings, traces go directly to Langfuse without
+Docker or an OpenTelemetry collector. The generic OTLP endpoint is only used
+when Langfuse is not configured. `TRACING_ENABLED=0` disables all exports.
+
+Each support turn creates a `handle-support-request` agent observation, with
+`generate-response` and `score-confidence` generations, `retrieve-context`
+retrieval, Gemini `embed-text` embeddings, tool calls, and guardrail decisions.
+Model prompts, tool definitions, responses, reasoning, and provider token usage
+are captured explicitly. Gemini token usage is recorded when its response
+provides it; vector values and API keys are never logged. Repeated PII checks
+are summarized on the root to keep traces readable. Model costs are published
+list-price equivalents, not invoices for your free-tier accounts.
+
+Inputs and outputs use the app's PII redaction plus an export-stage masking
+hook for common identifiers and configured secrets. Exception traces record
+the exception type, not raw exception messages or stack events. Conversation
+and customer IDs are SHA-256 hashes, so related turns group into Sessions
+without sending those identifiers verbatim. Extend the masking policy for any
+additional confidential fields used in your own support documents.
+
+`POST /chat` returns a `langfuse_trace_id` for correlation. The SDK batches
+exports in the background and flushes on server shutdown. Scripts that call
+`run_turn` should call `flush_tracing()` before exit. SDK-export tests use an
+in-memory exporter; the rest of the unit suite disables tracing.
+
+The integration follows the official
+[Langfuse skill](https://github.com/langfuse/skills/tree/main/skills/langfuse) and
+[tracing best practices](https://langfuse.com/docs/observability/best-practices).
+
 ## What you'll build
 
 A customer-support agent with tool use over a knowledge base and a ticketing

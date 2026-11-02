@@ -120,6 +120,7 @@ class Trace(BaseModel):
 
     id: str = Field(default_factory=lambda: _id("trace"))
     conversation_id: str
+    langfuse_trace_id: str | None = None
     messages: list[Message] = Field(default_factory=list)
     spans: list[SpanRecord] = Field(default_factory=list)
     decision: Decision | None = None

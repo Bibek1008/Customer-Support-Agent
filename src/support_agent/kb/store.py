@@ -61,8 +61,8 @@ class VectorStore:
     def _try_connect(self) -> bool:
         try:
             self._conn = psycopg.connect(self.settings.database_url, autocommit=True)
-            register_vector(self._conn)
             self._ensure_schema()
+            register_vector(self._conn)
             return True
         except Exception:
             self._conn = None

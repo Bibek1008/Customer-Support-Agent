@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     )
 
     # --- Reasoning model (Anthropic) -----------------------------------------
+    llm_provider: Literal["anthropic", "groq"] = Field(default="anthropic", alias="LLM_PROVIDER")
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
+    groq_model: str = Field(default="openai/gpt-oss-20b", alias="GROQ_MODEL")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     agent_model: str = Field(default="claude-opus-4-8", alias="AGENT_MODEL")
     router_model: str = Field(default="claude-sonnet-5", alias="ROUTER_MODEL")
@@ -51,20 +54,26 @@ class Settings(BaseSettings):
     )
 
     # --- Embeddings -----------------------------------------------------------
-    embedding_provider: Literal["openai", "bge-m3"] = Field(
+    embedding_provider: Literal["openai", "bge-m3", "fastembed", "gemini"] = Field(
         default="openai", alias="EMBEDDING_PROVIDER"
     )
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    gemini_api_key: str = Field(default="", alias="GEMINI_API_KEY")
     embedding_model: str = Field(default="text-embedding-3-large", alias="EMBEDDING_MODEL")
     embedding_dim: int = Field(default=3072, alias="EMBEDDING_DIM")
 
     # --- Self-hosted safety classifier (Llama Guard 4) ------------------------
+    hugging_face_hub_token: str = Field(default="", alias="HUGGING_FACE_HUB_TOKEN")
     safety_model_url: str = Field(default="", alias="SAFETY_MODEL_URL")
     safety_model_name: str = Field(
         default="meta-llama/Llama-Guard-4-12B", alias="SAFETY_MODEL_NAME"
     )
 
     # --- Tracing --------------------------------------------------------------
+    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
+    langfuse_base_url: str = Field(default="", alias="LANGFUSE_BASE_URL")
+    langfuse_environment: str = Field(default="development", alias="LANGFUSE_TRACING_ENVIRONMENT")
     otel_endpoint: str = Field(default="", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otel_service_name: str = Field(default="support-agent", alias="OTEL_SERVICE_NAME")
     tracing_enabled: bool = Field(default=True, alias="TRACING_ENABLED")
