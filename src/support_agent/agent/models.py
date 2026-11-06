@@ -20,6 +20,14 @@ from typing import Any
 
 from support_agent.config import get_settings
 
+
+def validate_credentials() -> None:
+    settings = get_settings()
+    if settings.llm_provider == "groq" and not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY is required for the configured Groq provider.")
+    if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is required for the configured Anthropic provider.")
+
 try:
     import anthropic
 

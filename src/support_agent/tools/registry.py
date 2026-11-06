@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from support_agent.schemas import Citation
 from support_agent.tools import knowledge_base, order_lookup, ticketing
 
@@ -100,8 +102,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "update_ticket_status",
         "description": (
-            "Update a ticket's status to one of: open, resolved, escalated. "
-            "A state-changing tool."
+            "Update a ticket's status to one of: open, resolved, escalated. A state-changing tool."
         ),
         "strict": True,
         "input_schema": {
@@ -140,12 +141,61 @@ TOOL_SCHEMAS: list[dict] = [
 PARALLEL_SAFE = frozenset({"knowledge_base", "order_lookup", "read_ticket"})
 
 
+class _Arguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _Search(_Arguments):
+    query: str = Field(min_length=1, max_length=2000)
+    k: int = Field(default=4, ge=1, le=8)
+
+
+class _Order(_Arguments):
+    order_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class _ReadTicket(_Arguments):
+    ticket_id: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class _CreateTicket(_Arguments):
+    subject: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1, max_length=8000)
+    customer_id: str | None = Field(default=None, max_length=100)
+
+
+class _UpdateTicket(_ReadTicket):
+    status: str = Field(pattern=r"^(open|resolved|escalated)$")
+
+
+class _Escalation(_Arguments):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+_VALIDATORS = {
+    "knowledge_base": _Search,
+    "order_lookup": _Order,
+    "read_ticket": _ReadTicket,
+    "create_ticket": _CreateTicket,
+    "update_ticket_status": _UpdateTicket,
+    "escalate_to_human": _Escalation,
+}
+
+
 def dispatch(name: str, tool_input: dict) -> ToolOutcome:
     """Run one tool call and return its outcome.
 
     ``tool_input`` is already a parsed dict (from ``tool_use.input``), never a
     raw string. Escalation is not executed here; it signals the loop.
     """
+    if name not in _VALIDATORS:
+        return ToolOutcome(text="Unknown tool. Choose one of the available tools.")
+    try:
+        tool_input = _VALIDATORS[name].model_validate(tool_input).model_dump(exclude_none=True)
+    except ValidationError:
+        return ToolOutcome(
+            text="Invalid tool arguments. Use the documented argument names, types, and limits."
+        )
     if name == "knowledge_base":
         result = knowledge_base.search_knowledge_base(
             query=tool_input["query"], k=int(tool_input.get("k", 4))
@@ -154,11 +204,35 @@ def dispatch(name: str, tool_input: dict) -> ToolOutcome:
 
     if name == "order_lookup":
         result = order_lookup.lookup_order(tool_input["order_id"])
-        return ToolOutcome(text=result.text)
+        citations = (
+            [
+                Citation(
+                    source_id="order:" + tool_input["order_id"],
+                    source_title="Order record",
+                    chunk=result.text,
+                    score=1.0,
+                )
+            ]
+            if result.found
+            else []
+        )
+        return ToolOutcome(text=result.text, citations=citations)
 
     if name == "read_ticket":
         result = ticketing.read_ticket(tool_input["ticket_id"])
-        return ToolOutcome(text=result.text, ticket_id=result.ticket_id)
+        citations = (
+            [
+                Citation(
+                    source_id="ticket:" + result.ticket_id,
+                    source_title="Support ticket",
+                    chunk=result.text,
+                    score=1.0,
+                )
+            ]
+            if result.ticket_id
+            else []
+        )
+        return ToolOutcome(text=result.text, ticket_id=result.ticket_id, citations=citations)
 
     if name == "create_ticket":
         result = ticketing.create_ticket(

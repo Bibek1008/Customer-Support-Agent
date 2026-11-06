@@ -40,14 +40,14 @@ try {
     & git -C $temporaryClone fetch --depth 1 origin $commit
     if ($LASTEXITCODE -ne 0) { throw "Could not fetch pinned commit $commit." }
 
-    & git -C $temporaryClone checkout --detach $commit
-    if ($LASTEXITCODE -ne 0) { throw "Could not check out pinned commit $commit." }
-
     & git -C $temporaryClone sparse-checkout init --no-cone
     if ($LASTEXITCODE -ne 0) { throw "Could not initialize sparse checkout." }
 
     & git -C $temporaryClone sparse-checkout set --no-cone @sparsePaths
     if ($LASTEXITCODE -ne 0) { throw "Could not select benchmark data files." }
+
+    & git -C $temporaryClone checkout --detach $commit
+    if ($LASTEXITCODE -ne 0) { throw "Could not check out pinned commit $commit." }
 
     $targetData = Join-Path $Destination "data\tau2"
     New-Item -ItemType Directory -Force -Path $targetData | Out-Null
@@ -81,6 +81,12 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $temporaryClone) {
-        Remove-Item -LiteralPath $temporaryClone -Recurse -Force
+        $resolvedClone = (Resolve-Path -LiteralPath $temporaryClone).Path
+        $resolvedTemp = (Resolve-Path -LiteralPath $env:TEMP).Path
+        if ((Split-Path $resolvedClone -Parent) -ne $resolvedTemp -or
+            (Split-Path $resolvedClone -Leaf) -notmatch '^tau2-bench-[0-9a-f]{32}$') {
+            throw "Refusing to remove unexpected temporary clone path: $resolvedClone"
+        }
+        Remove-Item -LiteralPath $resolvedClone -Recurse -Force
     }
 }

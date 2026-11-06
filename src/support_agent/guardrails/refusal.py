@@ -19,10 +19,11 @@ handoff, because it is a threshold decision, not a policy match.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 
-from support_agent.guardrails.safety import SafetyRole, get_classifier
+from support_agent.guardrails.safety import SafetyRole, SafetyUnavailableError, get_classifier
 from support_agent.observability.tracing import guardrail_span
 
 
@@ -65,6 +66,8 @@ def check_input(text: str) -> RefusalDecision:
     """Gate the user input before the agent loop runs."""
     with guardrail_span("refusal_input") as span:
         verdict = get_classifier().classify(text, role=SafetyRole.USER)
+        if any(category in verdict.categories for category in ("UNAVAILABLE", "INVALID_VERDICT")):
+            raise SafetyUnavailableError("Safety classification is unavailable.")
         if verdict.blocked:
             span.set("refusal.reason", RefusalReason.DISALLOWED.value)
             return RefusalDecision(
@@ -73,7 +76,10 @@ def check_input(text: str) -> RefusalDecision:
                 message=_DISALLOWED_MESSAGE,
             )
         lowered = text.lower()
-        if any(hint in lowered for hint in _OUT_OF_SCOPE_HINTS):
+        code_request = re.search(
+            r"\bwrite\b.{0,40}\b(?:python|javascript|script|code|program)\b", lowered
+        )
+        if code_request or any(hint in lowered for hint in _OUT_OF_SCOPE_HINTS):
             span.set("refusal.reason", RefusalReason.OUT_OF_SCOPE.value)
             return RefusalDecision(
                 refuse=True,
@@ -88,6 +94,8 @@ def check_response(text: str) -> RefusalDecision:
     """Gate the model's drafted answer before it reaches the user."""
     with guardrail_span("refusal_response") as span:
         verdict = get_classifier().classify(text, role=SafetyRole.ASSISTANT)
+        if any(category in verdict.categories for category in ("UNAVAILABLE", "INVALID_VERDICT")):
+            raise SafetyUnavailableError("Safety classification is unavailable.")
         if verdict.blocked:
             span.set("refusal.reason", RefusalReason.DISALLOWED.value)
             return RefusalDecision(

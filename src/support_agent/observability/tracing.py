@@ -73,6 +73,8 @@ def sanitize(value):
             s.ticketing_api_key,
             s.hugging_face_hub_token,
             s.database_url,
+            s.admin_api_key,
+            s.service_api_key,
         ):
             if secret and len(secret) >= 8:
                 value = value.replace(secret, "<SECRET>")
@@ -205,14 +207,22 @@ def trace_turn(function):
         if client is not None:
             from langfuse import propagate_attributes
 
+            from support_agent.request_context import current_request
+
             def identifier(value):
                 return hashlib.sha256(value.encode()).hexdigest() if value else None
 
+            request_context = current_request.get()
             context = propagate_attributes(
                 session_id=identifier(params.get("conversation_id")),
-                user_id=identifier(params.get("customer_id")),
+                user_id=request_context.owner_hash
+                if request_context
+                else identifier(params.get("customer_id")),
                 tags=["customer-support"],
-                metadata={"feature": "support-chat"},
+                metadata={
+                    "feature": "support-chat",
+                    **({"request_id": request_context.request_id} if request_context else {}),
+                },
             )
         with context, _span("handle-support-request", "agent") as span:
             token = _root.set(span)
@@ -301,6 +311,9 @@ def guardrail_span(check: str):
         span.set("guardrail.check", check)
         yield span
         span.update(output=span._metadata)
+        from support_agent.observability.audit import record_guardrail
+
+        record_guardrail(check, span._metadata)
         if summary is not None:
             entities = span._metadata.get("guardrail.pii.entities", "")
             summary["entities"].update(filter(None, entities.split(",")))

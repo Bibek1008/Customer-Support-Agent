@@ -16,13 +16,15 @@ sweeps.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 
+from support_agent.agent.groq_client import GroqOutputError
 from support_agent.agent.models import classifier_kwargs, get_client
 from support_agent.config import get_settings
 from support_agent.observability.cost import cost_from_usage
 from support_agent.observability.tracing import model_span
-from support_agent.schemas import Citation
+from support_agent.schemas import Citation, CostRecord
 
 _CONFIDENCE_SCHEMA = {
     "type": "object",
@@ -51,6 +53,7 @@ class ConfidenceResult:
     score: float
     reason: str
     cost_usd: float = 0.0
+    cost_record: CostRecord | None = None
 
 
 @dataclass
@@ -79,20 +82,34 @@ def score_confidence(question: str, answer: str, citations: list[Citation]) -> C
             {"role": "user", "content": user_block},
         ],
     ) as span:
-        resp = get_client().messages.create(
-            **kwargs,
-            system=_CONFIDENCE_INSTRUCTIONS,
-            output_config={"format": {"type": "json_schema", "schema": _CONFIDENCE_SCHEMA}},
-            messages=[{"role": "user", "content": user_block}],
-        )
+        try:
+            resp = get_client().messages.create(
+                **kwargs,
+                system=_CONFIDENCE_INSTRUCTIONS,
+                output_config={"format": {"type": "json_schema", "schema": _CONFIDENCE_SCHEMA}},
+                messages=[{"role": "user", "content": user_block}],
+            )
+        except GroqOutputError:
+            # An unscored answer must never pass the confidence gate.
+            return ConfidenceResult(score=0.0, reason="Confidence scoring failed; human review required.")
         cost = cost_from_usage(kwargs["model"], resp.usage)
         span.record_cost(cost)
         span.record_response(resp)
 
     text = next((b.text for b in resp.content if b.type == "text"), "{}")
-    data = json.loads(text)
-    score = max(0.0, min(1.0, float(data.get("confidence", 0.0))))
-    return ConfidenceResult(score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd)
+    try:
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            raise TypeError("Expected a confidence object")
+        value = data.get("confidence")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError("Expected a finite confidence number")
+        score = max(0.0, min(1.0, float(value)))
+    except (ValueError, TypeError):
+        return ConfidenceResult(
+            score=0.0, reason="Invalid confidence score; human review required.", cost_usd=cost.usd, cost_record=cost
+        )
+    return ConfidenceResult(score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd, cost_record=cost)
 
 
 def decide_handoff(confidence: float, threshold: float | None = None) -> HandoffDecision:

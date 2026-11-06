@@ -1,0 +1,72 @@
+# External PostgreSQL/Neon is required. Only the HTTPS proxy exposes public ports.
+name: demo-office-support
+x-app: &app
+  image: demo-office-support:${RELEASE_TAG:-local}
+  build: .
+  env_file: .env
+  environment:
+    APP_ENV: production
+    APP_ORIGIN: https://${DOMAIN:?Set DOMAIN to your support hostname}
+    PERSISTENCE_ENABLED: "1"
+    BUSINESS_MODE: ${BUSINESS_MODE:-demo}
+    BUSINESS_NAME: ${BUSINESS_NAME:-Demo Office Store}
+    ALLOW_FIXTURE_ORDERS: ${ALLOW_FIXTURE_ORDERS:-1}
+    SAFETY_PROVIDER: groq
+    TRACING_ENABLED: "1"
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  networks: [backend]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+services:
+  migrate:
+    <<: *app
+    command: [python, -m, support_agent.db]
+    restart: "no"
+    healthcheck:
+      disable: true
+  gateway:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    expose: ["8000"]
+    restart: unless-stopped
+    mem_limit: 4g
+    pids_limit: 256
+    healthcheck:
+      # Production host validation expects the public hostname, even on loopback.
+      test: [CMD, python, -c, "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/readyz',headers={'Host':os.environ['APP_ORIGIN'].split('//')[1]}); urllib.request.urlopen(r,timeout=10)"]
+      interval: 30s
+      timeout: 15s
+      start_period: 60s
+      retries: 3
+  proxy:
+    image: caddy:2.10.2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL for TLS registration}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [backend]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
+volumes:
+  caddy_data:
+  caddy_config:
+networks:
+  backend:

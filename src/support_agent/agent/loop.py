@@ -20,8 +20,9 @@ cross-cutting steps the manual loop makes explicit.
 from __future__ import annotations
 
 import json
+import re
 
-from support_agent.agent.confidence import decide_handoff, score_confidence
+from support_agent.agent.confidence import ConfidenceResult, decide_handoff, score_confidence
 from support_agent.agent.models import get_client, reasoner_kwargs
 from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
@@ -30,8 +31,10 @@ from support_agent.guardrails.injection import quarantine_tool_output
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.cost import cost_from_usage
 from support_agent.observability.tracing import (
+    guardrail_span,
     model_span,
     record_request_input,
+    sanitize,
     tool_span,
     trace_turn,
 )
@@ -69,11 +72,82 @@ def run_turn(
     ]
     trace.messages = [*prior, incoming]
 
+    # A fixed capability greeting makes no unsupported company-policy claims.
+    # Match the entire input so a greeting cannot bypass a real support request.
+    normalized = re.sub(r"[^a-z0-9 ]", "", redacted.text.lower()).strip()
+    greetings = {
+        "hi",
+        "hello",
+        "hey",
+        "hey bro",
+        "hello there",
+        "good morning",
+        "good evening",
+        "what can you do",
+        "how can you help",
+        "what are you doing",
+        "hey what are you doing",
+        "hey what are you doing bro",
+        "hey what you are doing bro",
+        "what you are doing",
+        "thanks",
+        "thank you",
+        "thanks bro",
+        "really why",
+        "why",
+    }
+    if normalized in greetings:
+        text = "Hi! I can help with returns, shipping, billing, and product questions. What would you like help with?"
+        if normalized in {"thanks", "thank you", "thanks bro"}:
+            text = "You're welcome! Let me know if you have another support question."
+        if normalized in {"why", "really why"}:
+            previous = next((m.content for m in reversed(prior) if m.role == Role.ASSISTANT), "")
+            text = "Which part would you like me to explain?"
+            if "saved your request for support review" in previous:
+                text = "I couldn't verify an answer from the approved support information, so your request was saved for staff review. You can check this chat for a reply."
+        with guardrail_span("static_response") as span:
+            span.set(
+                "guardrail.static_response", "Fixed support template; no model-generated content."
+            )
+        trace.decision = Decision(
+            type=DecisionType.ANSWER,
+            answer=text,
+            confidence=1.0,
+            threshold=settings.handoff_threshold,
+        )
+        trace.messages.append(Message(role=Role.ASSISTANT, content=text))
+        return trace
+
     # 2. Input guardrail: disallowed or out of scope -> refuse without a loop.
     gate = refusal.check_input(redacted.text)
     if gate.refuse:
         trace.decision = _refusal_decision(gate.message, settings.handoff_threshold)
         trace.messages.append(Message(role=Role.ASSISTANT, content=gate.message))
+        return trace
+
+    if settings.pricing_requires_review and re.search(
+        r"\b(?:discounts?|competitors?|promotions?|coupons?)\b|price match|promo code|best deal",
+        normalized,
+    ):
+        trace.decision = _handoff(
+            trace,
+            "Pricing and promotions require staff review; no approved pricing policy is connected.",
+            0.0,
+            settings.handoff_threshold,
+            customer_id,
+        )
+        return trace
+
+    if re.search(
+        r"(?:lost access|no longer.{0,12}access|cant access|cannot access)", normalized
+    ) and re.search(r"email|second factor|authenticator|two factor|2fa", normalized):
+        trace.decision = _handoff(
+            trace,
+            "Account recovery requires staff identity verification.",
+            0.0,
+            settings.handoff_threshold,
+            customer_id,
+        )
         return trace
 
     # 3. The manual tool-use loop.
@@ -105,7 +179,18 @@ def run_turn(
             cost = cost_from_usage(kwargs["model"], resp.usage)
             span.record_cost(cost)
             span.record_response(resp)
-        trace.spans.append(SpanRecord(name=f"chat {kwargs['model']}", kind="model", cost=cost))
+        trace.spans.append(
+            SpanRecord(
+                name="generate-response",
+                kind="model",
+                cost=cost,
+                attributes={
+                    "model": kwargs["model"],
+                    "input": sanitize(messages),
+                    "output": sanitize(resp.content),
+                },
+            )
+        )
 
         if resp.stop_reason == "refusal":
             # The model declined for safety reasons; escalate rather than retry.
@@ -189,7 +274,13 @@ def _run_tool(block, trace: Trace):
         )
         span.set("gen_ai.tool.citations", len(outcome.citations))
         span.set("gen_ai.tool.handoff", outcome.is_handoff)
-    trace.spans.append(SpanRecord(name=f"tool {block.name}", kind="tool"))
+    trace.spans.append(
+        SpanRecord(
+            name=f"tool {block.name}",
+            kind="tool",
+            attributes={"input": sanitize(tool_input), "output": sanitize(outcome)},
+        )
+    )
     return outcome
 
 
@@ -215,11 +306,48 @@ def _finalize(
         )
 
     # Score confidence against the sources actually retrieved, then apply tau*.
-    conf = score_confidence(question=question, answer=answer_text, citations=citations)
+    if settings.answer_mode == "extractive":
+        safe_sources = [
+            source
+            for source in citations
+            if not quarantine_tool_output("source", source.chunk).triggered
+        ]
+        if not safe_sources:
+            return _handoff(
+                trace,
+                "No safe source excerpt was available.",
+                0.0,
+                settings.handoff_threshold,
+                customer_id,
+            )
+        source = max(safe_sources, key=lambda item: item.score)
+        answer_text = f"{source.source_title}:\n\n{source.chunk}\n\nSource: {source.source_id}."
+        citations = [source]
+        conf = ConfidenceResult(
+            score=1.0, reason="Exact excerpt of a retrieved source, not a model certainty estimate."
+        )
+    else:
+        # Writing tools can only create/update tickets. A model must not claim
+        # refunds, password changes, or invented ticket IDs as completed actions.
+        unsupported_action = re.search(
+            r"\b(?:i|we)(?: have|ve|’ve|'ve)? (?:created|issued|processed|cancelled|canceled|reset|sent|opened)\b|will follow up|will reach out",
+            answer_text,
+            re.IGNORECASE,
+        )
+        if unsupported_action:
+            return _handoff(
+                trace,
+                "The draft claimed an action that requires staff verification.",
+                0.0,
+                settings.handoff_threshold,
+                customer_id,
+            )
+        conf = score_confidence(question=question, answer=answer_text, citations=citations)
     trace.spans.append(
         SpanRecord(
             name="confidence",
             kind="model",
+            cost=getattr(conf, "cost_record", None),
             attributes={"score": conf.score, "reason": conf.reason},
         )
     )
@@ -244,6 +372,7 @@ def _finalize(
             customer_id=customer_id,
         )
 
+    answer_text = get_redactor().redact(answer_text).text
     trace.messages.append(Message(role=Role.ASSISTANT, content=answer_text))
     return Decision(
         type=DecisionType.ANSWER,

@@ -1,0 +1,56 @@
+# Demo verification — 6 November 2026
+
+The local demonstration is running at http://127.0.0.1:8001/.
+Staff can open http://127.0.0.1:8001/admin/inbox and use the private
+`ADMIN_API_KEY` from `.env`. Never commit that file or put this key in chat.
+
+## Checks completed
+
+- Automated suite: 103 passed; 3 database integration tests skipped in the
+  default run. Those 3 integration tests also passed in a separate real
+  PostgreSQL run.
+- Live HTTP smoke: frontend HTML and security policy served, HttpOnly guest
+  session established, history saved, repeated request deduplicated,
+  conversation isolation enforced, and staff authentication enforced.
+- Live model smoke: the return-policy answer matched the cited approved
+  document exactly. Trace: `542279b7d3db9d12dbc15fa46e1e3bd1`.
+- Five approved knowledge documents copied without modifying their dataset
+  originals. Held-out evaluation tickets were not ingested. Database schema
+  version 3 and compatible active retrieval were verified.
+- Actual Langfuse records were inspected for moderation, generation, retrieval,
+  embeddings, and guardrails. Example trace:
+  https://cloud.langfuse.com/project/cmvzd80v703c2ad0ewbm2yk33/traces/8828aa9d59e20821cbf9cb1316550c51
+- Both frontend scripts passed JavaScript syntax checks.
+
+## Evaluation evidence
+
+The latest complete 12-ticket extractive evaluation is saved in
+`eval_report.json` and PostgreSQL as
+`1ca7cc88-61b3-4c22-a75d-04524fb4e758`:
+
+| Measure | Observed result |
+| --- | --- |
+| Resolution | 10/12 (83.3%) |
+| Accuracy on answer tickets | 8/8 (100%) |
+| Hallucination among judged responses | 0/10 |
+| Tone | 9/10 (90%) |
+| Failed or incomplete requests | 0 |
+
+The two resolution failures involved discount and code-writing questions.
+Routing was subsequently corrected and both cases passed a separate live
+regression run, saved as `8fbb1c9d-7095-4faf-87d3-d4c0a164bf5b` and
+`eval/out/routing_regression.json`. The complete 12-ticket evaluation has not
+been rerun since these two corrections. These small demonstration results do
+not establish production quality or a calibrated confidence threshold.
+
+## Remaining deployment checks
+
+Docker configuration and CI build checks are prepared. Docker is not installed
+on this workstation, so the image build, container startup, public TLS, and a
+backup restoration drill have not been verified. Complete those steps on the
+deployment host using `docs/PRODUCTION.md` before serving real customers.
+
+The current safety-provider quota supports a paced demonstration. Public
+concurrent traffic needs adequate provider capacity. Guest sessions and demo
+orders must be replaced with verified customer identity and authorized order
+access for a real store. No public deployment has been performed.

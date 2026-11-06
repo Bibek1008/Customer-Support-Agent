@@ -71,6 +71,7 @@ def test_non_ssn_text_is_not_matched_by_deterministic_ssn_rule(text):
         "Your return window is 30 days.",
         "Your order reference 123456789 is still processing.",
         "The shipping update is due in 5 business days.",
+        "Hardware has a one-year limited warranty.",
     ],
 )
 def test_common_numbers_are_preserved_by_the_full_redactor(text):

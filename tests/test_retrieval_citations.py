@@ -48,3 +48,22 @@ def test_reingestion_is_idempotent_and_preserves_source_metadata(kb):
     assert warranty.metadata["title"] == "Product Warranty"
     assert warranty.metadata["url"] == "https://help.example.com/warranty"
     assert warranty.metadata["source_path"] == "warranty.md"
+
+
+def test_updated_document_archives_old_policy_instead_of_retrieving_both(kb):
+    from support_agent.kb.store import Chunk
+
+    old = next(c for c in kb._memory if c.source_id == "warranty")
+    replacement = Chunk(
+        source_id="warranty",
+        source_title="Updated warranty",
+        url=None,
+        text="Replacement policy for a controlled unit test.",
+        embedding=old.embedding,
+    )
+    kb.upsert([replacement])
+    assert not old.active
+    assert replacement.active
+    assert kb.count() == 5
+    assert old in kb._memory
+    assert all(r.text != old.text for r in kb.search(old.embedding))

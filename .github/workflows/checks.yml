@@ -1,0 +1,53 @@
+name: Application checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  unit-tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --require-hashes -r requirements.lock
+      - run: python -m pip install --no-deps -e .
+      - run: python -m pip install pytest pytest-asyncio ruff
+      - name: Restore pinned public benchmark data
+        shell: pwsh
+        run: ./eval/download_tau2_bench.ps1
+      - run: python -m pytest tests -p no:cacheprovider
+      - run: python -m ruff check src/support_agent
+  database-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: support
+          POSTGRES_PASSWORD: integration-only
+          POSTGRES_DB: support_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U support -d support_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://support:integration-only@127.0.0.1:5432/support_test
+      SUPPORT_TEST_DATABASE: '1'
+      EMBEDDING_DIM: '384'
+      TRACING_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --require-hashes -r requirements.lock
+      - run: python -m pip install --no-deps -e .
+      - run: python -m pip install pytest pytest-asyncio
+      - run: python -m pytest tests/test_database_integration.py -p no:cacheprovider
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker build --tag demo-office-support:ci .

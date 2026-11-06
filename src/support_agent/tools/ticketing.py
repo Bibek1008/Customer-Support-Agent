@@ -3,8 +3,9 @@
 These are the tools that change state, so they are the ones that need gating in
 production (a write tool should be behind confirmation, per the tool-surface
 discipline). The client talks to a real ticketing API when
-``TICKETING_BASE_URL`` is set; otherwise it uses an in-process store so the loop
-and the eval suite run without a live desk.
+``TICKETING_BASE_URL`` is set in legacy development mode. With persistence enabled,
+PostgreSQL is authoritative and the built-in staff inbox handles review and replies.
+Only isolated non-persistent tests use the in-process store.
 
 The tools return citable records (a ticket's fields) rather than free prose, so
 the agent grounds any status claim it makes about a ticket.
@@ -17,6 +18,8 @@ from dataclasses import dataclass
 import httpx
 
 from support_agent.config import get_settings
+from support_agent.repository import get_repository
+from support_agent.request_context import current_request
 from support_agent.schemas import Ticket, TicketStatus
 
 
@@ -37,6 +40,17 @@ class _TicketBackend:
 
     def create(self, subject: str, body: str, customer_id: str | None) -> Ticket:
         ticket = Ticket(subject=subject, body=body, customer_id=customer_id)
+        if self.settings.persistence_enabled:
+            context = current_request.get()
+            if context:
+                ticket.customer_id = (
+                    None  # LLM-supplied IDs are not authenticated customer identities.
+                )
+            return get_repository().create_ticket(
+                ticket,
+                context.conversation_id if context else None,
+                context.request_id if context else None,
+            )
         if self._remote:
             resp = httpx.post(
                 f"{self.settings.ticketing_base_url.rstrip('/')}/tickets",
@@ -50,6 +64,9 @@ class _TicketBackend:
         return ticket
 
     def get(self, ticket_id: str) -> Ticket | None:
+        if self.settings.persistence_enabled:
+            context = current_request.get()
+            return get_repository().ticket(ticket_id, context.conversation_id if context else None)
         if self._remote:
             resp = httpx.get(
                 f"{self.settings.ticketing_base_url.rstrip('/')}/tickets/{ticket_id}",
@@ -63,6 +80,11 @@ class _TicketBackend:
         return self._memory.get(ticket_id)
 
     def update_status(self, ticket_id: str, status: TicketStatus) -> Ticket | None:
+        if self.settings.persistence_enabled:
+            context = current_request.get()
+            return get_repository().update_ticket(
+                ticket_id, status, context.conversation_id if context else None
+            )
         if self._remote:
             resp = httpx.patch(
                 f"{self.settings.ticketing_base_url.rstrip('/')}/tickets/{ticket_id}",
@@ -110,10 +132,7 @@ def read_ticket(ticket_id: str) -> TicketResult:
     if ticket is None:
         return TicketResult(text=f"No ticket found with id {ticket_id}.")
     return TicketResult(
-        text=(
-            f"Ticket {ticket.id}: status {ticket.status.value}, "
-            f"subject '{ticket.subject}'."
-        ),
+        text=(f"Ticket {ticket.id}: status {ticket.status.value}, subject '{ticket.subject}'."),
         ticket_id=ticket.id,
     )
 

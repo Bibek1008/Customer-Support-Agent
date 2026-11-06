@@ -54,6 +54,11 @@ def lookup_order(order_id: str) -> OrderResult:
     """Return the status of ``order_id`` as a citable record."""
     order_id = order_id.strip().upper()
     settings = get_settings()
+    if not settings.allow_fixture_orders or settings.business_mode == "live":
+        return OrderResult(
+            text="Order lookup requires a verified account integration. Use the authenticated orders page or request staff review.",
+            found=False,
+        )
 
     base = settings.ticketing_base_url or os.environ.get("ORDER_SERVICE_URL", "")
     if base:
@@ -68,13 +73,18 @@ def lookup_order(order_id: str) -> OrderResult:
             resp.raise_for_status()
             record = resp.json()
             return OrderResult(text=_format(order_id, record), found=True)
-        except Exception as exc:  # surface the failure; the agent can escalate
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
             return OrderResult(
-                text=f"The order service could not be reached for {order_id}: {exc}",
+                text="The order service could not be reached. Request staff review.",
                 found=False,
             )
 
-    record = _FIXTURE_ORDERS.get(order_id)
+    if settings.persistence_enabled:
+        from support_agent.repository import get_repository
+
+        record = get_repository().demo_order(order_id)
+    else:
+        record = _FIXTURE_ORDERS.get(order_id)
     if record is None:
         return OrderResult(text=f"No order found with id {order_id}.", found=False)
     return OrderResult(text=_format(order_id, record), found=True)

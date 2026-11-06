@@ -17,9 +17,58 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables (or a local ``.env``)."""
 
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    app_env: Literal["development", "test", "production"] = Field(
+        default="development", alias="APP_ENV"
     )
+    persistence_enabled: bool = Field(default=False, alias="PERSISTENCE_ENABLED")
+    app_origin: str = Field(default="http://127.0.0.1:8001", alias="APP_ORIGIN")
+    admin_api_key: str = Field(default="", alias="ADMIN_API_KEY")
+    service_api_key: str = Field(default="", alias="SERVICE_API_KEY")
+    session_days: int = Field(default=7, alias="SESSION_DAYS", ge=1, le=30)
+    history_messages: int = Field(default=20, alias="HISTORY_MESSAGES", ge=2, le=100)
+    rate_limit_per_minute: int = Field(default=20, alias="RATE_LIMIT_PER_MINUTE", ge=1, le=1000)
+    database_pool_size: int = Field(default=10, alias="DATABASE_POOL_SIZE", ge=2, le=50)
+    allow_fixture_orders: bool = Field(default=True, alias="ALLOW_FIXTURE_ORDERS")
+    business_mode: Literal["demo", "live"] = Field(default="demo", alias="BUSINESS_MODE")
+    answer_mode: Literal["extractive", "generated"] = Field(
+        default="extractive", alias="ANSWER_MODE"
+    )
+    business_name: str = Field(
+        default="Demo Office Store", alias="BUSINESS_NAME", min_length=1, max_length=100
+    )
+    safety_provider: Literal["disabled", "server", "groq"] = Field(
+        default="server", alias="SAFETY_PROVIDER"
+    )
+    safety_groq_model: str = Field(
+        default="openai/gpt-oss-safeguard-20b", alias="SAFETY_GROQ_MODEL"
+    )
+
+    pricing_requires_review: bool = Field(default=True, alias="PRICING_REQUIRES_REVIEW")
+
+    def validate_production(self) -> None:
+        if self.app_env != "production":
+            return
+        missing = []
+        if not self.persistence_enabled:
+            missing.append("PERSISTENCE_ENABLED=1")
+        if not self.app_origin.startswith("https://"):
+            missing.append("HTTPS APP_ORIGIN")
+        if len(self.admin_api_key) < 32 or len(self.service_api_key) < 32:
+            missing.append("separate ADMIN_API_KEY and SERVICE_API_KEY (32+ characters)")
+        if self.admin_api_key == self.service_api_key:
+            missing.append("distinct staff and service credentials")
+        if self.safety_provider == "disabled" or (
+            self.safety_provider == "server" and not self.safety_model_url
+        ):
+            missing.append("configured safety classifier")
+        if self.safety_provider == "groq" and not self.groq_api_key:
+            missing.append("GROQ_API_KEY for safety")
+        if self.allow_fixture_orders and self.business_mode != "demo":
+            missing.append("ALLOW_FIXTURE_ORDERS=0")
+        if missing:
+            raise RuntimeError("Production configuration requires: " + "; ".join(missing))
 
     # --- Reasoning model (Anthropic) -----------------------------------------
     llm_provider: Literal["anthropic", "groq"] = Field(default="anthropic", alias="LLM_PROVIDER")
@@ -85,7 +134,7 @@ class Settings(BaseSettings):
     # --- Handoff --------------------------------------------------------------
     # The confidence cutoff tau*. Below it the agent escalates instead of
     # answering. eval/threshold.py sweeps this and prints the value to set.
-    handoff_threshold: float = Field(default=0.60, alias="HANDOFF_THRESHOLD")
+    handoff_threshold: float = Field(default=0.60, alias="HANDOFF_THRESHOLD", ge=0, le=1)
 
 
 @lru_cache

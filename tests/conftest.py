@@ -144,6 +144,11 @@ def _isolate(monkeypatch):
     into the next test. Resetting the singletons gives each test a clean process.
     """
     monkeypatch.setenv("TRACING_ENABLED", "0")
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("PERSISTENCE_ENABLED", "0")
+    monkeypatch.setenv("SAFETY_PROVIDER", "server")
+    monkeypatch.setenv("ALLOW_FIXTURE_ORDERS", "1")
+    monkeypatch.setenv("ANSWER_MODE", "generated")
     from support_agent.config import get_settings
 
     get_settings.cache_clear()

@@ -42,8 +42,7 @@ def escalate_to_human(
     _backend().update_status(ticket.id, TicketStatus.ESCALATED)
 
     message = (
-        "I want to make sure you get this right, so I'm connecting you with a "
-        f"human agent. They have the full context and will follow up. Your "
-        f"reference is {ticket.id}."
+        "I couldn't verify an answer, so I've saved your request for support review. "
+        f"Your reference is {ticket.id}. You can check this chat for a staff reply."
     )
     return HandoffResult(text=message, ticket_id=ticket.id)

@@ -19,6 +19,7 @@ import httpx
 
 from support_agent.config import get_settings
 from support_agent.observability.tracing import embedding_span
+from support_agent.request_context import remaining_timeout
 
 
 def _l2_normalize(vector: list[float]) -> list[float]:
@@ -89,7 +90,7 @@ class Embedder:
                         for text in batch
                     ]
                 },
-                timeout=60.0,
+                timeout=remaining_timeout(30),
             )
             if response.status_code == 429:
                 raise RuntimeError("Gemini embedding quota reached; wait before retrying.")
@@ -146,7 +147,7 @@ class Embedder:
                 # Matryoshka truncation: ask for exactly the stored dimension.
                 "dimensions": self.dim,
             },
-            timeout=60.0,
+            timeout=remaining_timeout(30),
         )
         resp.raise_for_status()
         data = resp.json()["data"]

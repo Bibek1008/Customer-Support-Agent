@@ -10,6 +10,20 @@ from types import SimpleNamespace
 
 import httpx
 
+from support_agent.request_context import remaining_timeout
+
+
+class GroqRequestError(RuntimeError):
+    """A provider failure with a safe message, never the raw response body."""
+
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class GroqOutputError(GroqRequestError):
+    """The provider could not generate a parseable model response."""
+
 
 def _field(block, name, default=None):
     return block.get(name, default) if isinstance(block, dict) else getattr(block, name, default)
@@ -94,24 +108,56 @@ class GroqClient:
                     "schema": output_config["format"]["schema"],
                 },
             }
-        response = httpx.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self._api_key}"},
-            json=payload,
-            timeout=90.0,
-        )
+        for attempt in range(2):
+            response = httpx.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json=payload,
+                timeout=remaining_timeout(),
+            )
+            # Groq can intermittently fail to parse even strict structured output.
+            # Retry only generation failures, once, with the same provider/schema.
+            code = None
+            if response.status_code == 400:
+                try:
+                    body = response.json()
+                    error = body.get("error") if isinstance(body, dict) else None
+                    code = error.get("code") if isinstance(error, dict) else None
+                except ValueError:
+                    pass
+            if code not in {"output_parse_failed", "json_validate_failed", "tool_use_failed"}:
+                break
+            if attempt == 1:
+                raise GroqOutputError("Groq could not generate a valid response.", 502)
         if response.status_code == 429:
-            raise RuntimeError(
-                "Groq usage limit reached. Wait before retrying; no fallback was used."
+            raise GroqRequestError(
+                "Groq usage limit reached. Wait before retrying; no fallback was used.", 429
             )
         if response.is_error:
             # Do not expose provider error bodies: they can include customer input.
-            raise RuntimeError(f"Groq request failed (HTTP {response.status_code}).")
-        data = response.json()
-        choice = data["choices"][0]
+            raise GroqRequestError(
+                f"Groq request failed (HTTP {response.status_code}).", response.status_code
+            )
+        try:
+            data = response.json()
+            choice = data["choices"][0]
+            message = choice["message"]
+            if not isinstance(message, dict) or (
+                message.get("content") is not None and not isinstance(message["content"], str)
+            ):
+                raise ValueError("Invalid message")
+            for call in message.get("tool_calls") or []:
+                arguments = json.loads(call["function"]["arguments"])
+                if not isinstance(arguments, dict):
+                    raise TypeError("Invalid tool arguments")
+        except (ValueError, TypeError, KeyError, IndexError) as error:
+            raise GroqOutputError(
+                "Groq returned an invalid response. Please retry.", 502
+            ) from error
         if choice["finish_reason"] == "length":
-            raise RuntimeError("Groq response hit the output token limit; try a shorter request.")
-        message = choice["message"]
+            raise GroqOutputError(
+                "Groq response hit the output token limit; try a shorter request.", 502
+            )
         blocks = []
         if message.get("content"):
             blocks.append(SimpleNamespace(type="text", text=message["content"]))

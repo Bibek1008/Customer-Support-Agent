@@ -81,7 +81,12 @@ def ingest_directory(
         title = meta.get("title", path.stem.replace("-", " ").title())
         url = meta.get("url") or None
         source_id = path.relative_to(root).with_suffix("").as_posix()
-        metadata = {**meta, "source_path": path.relative_to(root).as_posix()}
+        metadata = {
+            **meta,
+            "source_path": path.relative_to(root).as_posix(),
+            "embedding_model": settings.embedding_model,
+            "embedding_provider": settings.embedding_provider,
+        }
         for piece in chunk_text(body, size=chunk_size, overlap=overlap):
             all_chunks.append(
                 Chunk(
@@ -104,16 +109,12 @@ def ingest_directory(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Ingest KB docs into pgvector.")
-    parser.add_argument(
-        "--docs", default=None, help="Directory of approved KB documents"
-    )
+    parser.add_argument("--docs", default=None, help="Directory of approved KB documents")
     parser.add_argument("--chunk-size", type=int, default=None, help="Chunk size in characters")
     parser.add_argument(
         "--chunk-overlap", type=int, default=None, help="Chunk overlap in characters"
     )
-    parser.add_argument(
-        "--reset", action="store_true", help="Clear existing chunks first"
-    )
+    parser.add_argument("--reset", action="store_true", help="Clear existing chunks first")
     args = parser.parse_args()
 
     settings = get_store().settings

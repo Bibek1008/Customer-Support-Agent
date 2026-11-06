@@ -43,7 +43,8 @@ _CONTEXTUAL_SSN = re.compile(
     flags=re.IGNORECASE,
 )
 _NON_PII_DURATION = re.compile(
-    r"(?<!\w)\d{1,3}\s+(?:business\s+)?(?:days?|weeks?|months?|years?)\b",
+    r"(?<!\w)(?:\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)"
+    r"[ -]+(?:business[ -]+)?(?:minutes?|hours?|days?|weeks?|months?|years?)\b",
     re.IGNORECASE,
 )
 _BUSINESS_ID_PREFIX = re.compile(
@@ -138,11 +139,7 @@ class PIIRedactor:
             text=text,
             analyzer_results=results,
             # Replace with a typed placeholder, e.g. <EMAIL_ADDRESS>.
-            operators={
-                "DEFAULT": OperatorConfig(
-                    "replace", {"new_value": None}
-                )
-            },
+            operators={"DEFAULT": OperatorConfig("replace", {"new_value": None})},
         )
         return RedactionResult(text=anonymized.text, entities=entities)
 

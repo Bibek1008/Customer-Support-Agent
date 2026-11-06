@@ -1,5 +1,27 @@
 # Production customer-support agent
 
+The current application is a database-backed **Demo Office Store** demonstration
+with fictional policies and sample orders. It includes saved conversations,
+an authenticated staff inbox, hosted safety checks, guardrail activity, and stored
+evaluation reports. Start with [deployment and operations](docs/PRODUCTION.md).
+The configured demo uses Groq GPT-OSS 20B, Gemini embeddings, PostgreSQL/pgvector,
+Groq GPT-OSS Safeguard, and Langfuse. Factual answers quote source excerpts by
+default. The older setup sections below describe optional development alternatives.
+
+```powershell
+.venv/Scripts/python.exe -m support_agent.db
+.venv/Scripts/python.exe -m support_agent.kb.ingest --docs knowledge_base/approved
+.venv/Scripts/python.exe -m uvicorn support_agent.server:app --host 127.0.0.1 --port 8001 --no-access-log
+```
+
+Customer chat: http://127.0.0.1:8001/ · Staff inbox:
+http://127.0.0.1:8001/admin/inbox (use the private `ADMIN_API_KEY` from `.env`).
+Keep `PERSISTENCE_ENABLED=1`. Credentials are environment secrets; chat history,
+tickets, replies, traces, demo orders, and eval results are database records.
+Docker preparation is in `compose.production.yaml`; building and TLS verification
+require Docker and a deployment hostname. The free hosted safety quota limits
+this demonstration's traffic; it is not a public-traffic capacity guarantee.
+
 ## Free local development with Groq and Neon
 
 Use a Groq account on its Free plan for chat and confidence scoring, FastEmbed

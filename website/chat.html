@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Support Desk · Customer Support Agent</title>
+  <style>
+    :root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#232c36;background:#f5f6f8;font-synthesis:none}
+    *{box-sizing:border-box}body{margin:0}button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.6}
+    .layout{max-width:1140px;margin:auto;padding:38px 28px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:30px}
+    .brand{font-weight:750;font-size:20px;letter-spacing:-.5px;display:flex;align-items:center;gap:12px}.logo{background:#6845c5;color:white;border-radius:12px;padding:10px 13px;font-size:17px}
+    .status{font-size:13px;color:#65707e;display:flex;align-items:center;gap:8px}.dot{width:8px;height:8px;border-radius:50%;background:#9ba3af}.status[data-state=online] .dot{background:#21986b}.status[data-state=offline] .dot{background:#cd5656}
+    main{display:grid;grid-template-columns:255px minmax(0,1fr);gap:24px}.sidebar{padding:15px 0}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;color:#78629e}
+    h1{font-size:32px;line-height:1.2;letter-spacing:-1px;margin:14px 0}p{font-size:14px;line-height:1.7;color:#697381}.sidebar p{max-width:235px}
+    .topics{margin:30px 0 20px;display:grid;gap:10px}.topic{text-align:left;border:1px solid #e0dce9;background:#fff;border-radius:10px;padding:13px 14px;font-size:13px;color:#4e3e71}.topic:hover{background:#f1ebfc;border-color:#c5b7e4}
+    .note{border-top:1px solid #e1e3e8;padding-top:16px;font-size:12px}.chat{background:#fff;border:1px solid #e1e4e9;border-radius:18px;box-shadow:0 8px 35px #20233506;overflow:hidden}
+    .chat-header{padding:21px 25px;border-bottom:1px solid #edf0f3;display:flex;justify-content:space-between;align-items:center}.chat-header strong{font-size:15px}.chat-header small{display:block;color:#7a8593;font-size:12px;margin-top:5px}
+    .clear{border:1px solid #e3e6ec;border-radius:8px;padding:8px 12px;background:white;font-size:12px;color:#67717e}
+    .messages{height:480px;overflow-y:auto;padding:26px;display:flex;flex-direction:column;gap:22px;scroll-behavior:smooth}.message{max-width:94%;font-size:14px;line-height:1.75}.message .label{font-weight:650;color:#7d8591;font-size:11px;margin:0 0 7px;text-transform:uppercase;letter-spacing:.7px}.bubble{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f5f9;border-radius:3px 13px 13px;padding:15px 18px}
+    .user{align-self:flex-end;max-width:88%}.user .label{text-align:right}.user .bubble{background:#6b49c7;color:#fff;border-radius:13px 3px 13px 13px}.error .bubble{background:#fff0f0;color:#a12f39}
+    .metadata{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.badge{font-size:11px;background:#eff7f2;color:#2b7051;padding:3px 8px;border-radius:5px}.badge.handoff{background:#fff5e5;color:#8b6019}
+    details{margin-top:12px;font-size:12px;color:#647184}summary{cursor:pointer;color:#6a48bc;font-weight:600}.source{margin-top:9px;border-left:2px solid #ded4f2;padding:4px 12px}.source p{font-size:12px;line-height:1.55;margin:5px 0;color:#647184}.source a{color:#6948bb}
+    form{border-top:1px solid #edf0f3;padding:18px 22px 13px}.compose{display:flex;gap:12px;align-items:flex-end;border:1px solid #dce0e8;border-radius:12px;padding:10px}.compose:focus-within{border-color:#9876d8;box-shadow:0 0 0 3px #9876d815}textarea{resize:none;flex:1;min-width:0;border:0;outline:0;padding:5px 6px;color:#232c36;background:white;line-height:1.5;height:54px;font-size:14px}textarea::placeholder{color:#8c94a0}.send{background:#6845c5;color:#fff;border:0;border-radius:8px;padding:11px 18px;font-weight:600;font-size:13px}.hint{font-size:11px;color:#9299a4;margin:9px 4px 0}.footer{font-size:12px;color:#9299a4;text-align:center;margin-top:24px}.footer a{color:#7b6b9b;text-decoration:none}
+    @media(max-width:760px){.layout{padding:20px 14px}.top{margin-bottom:22px}.status{font-size:11px}main{grid-template-columns:1fr;gap:16px}.sidebar{padding:0}h1{font-size:26px;margin:9px 0}.sidebar p{max-width:none;margin:6px 0}.topics{display:flex;flex-wrap:wrap;margin:16px 0 0;gap:7px}.topic{font-size:12px;padding:9px 11px}.note{display:none}.messages{height:420px;padding:18px}.chat-header{padding:17px}form{padding:13px}.message{max-width:100%}}
+  </style>
+</head>
+<body>
+<div class="layout">
+  <header class="top"><div class="brand"><span class="logo" aria-hidden="true">S</span>Support Desk</div><div class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></div></header>
+  <main>
+    <aside class="sidebar">
+      <div class="eyebrow">Your support assistant</div><h1>A little help.<br>A clear answer.</h1>
+      <p>Ask about returns, shipping, billing, or warranties. Get answers backed by our support documents.</p>
+      <div class="topics" aria-label="Suggested questions">
+        <button class="topic" data-question="What is your return policy?">Returns & refunds ↗</button>
+        <button class="topic" data-question="How long does standard shipping take?">Shipping & delivery ↗</button>
+        <button class="topic" data-question="How do I cancel my subscription?">Billing & subscriptions ↗</button>
+        <button class="topic" data-question="What does the product warranty cover?">Product warranty ↗</button>
+      </div>
+      <p class="note">When an answer needs a closer look, the assistant can hand your request to the support team.</p>
+    </aside>
+    <section class="chat" aria-label="Support chat">
+      <div class="chat-header"><div><strong>Let’s sort it out</strong><small>Saved securely · Staff replies appear here</small></div><button class="clear" id="clear">New chat</button></div>
+      <div class="messages" id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
+      <form id="form"><div class="compose"><textarea id="question" aria-label="Your support question" placeholder="How can we help you today?" maxlength="4000" required></textarea><button class="send" id="send" type="submit">Send ↑</button></div><div class="hint">Enter to send · Shift + Enter for a new line · Sensitive identifiers are redacted before storage.</div></form>
+    </section>
+  </main>
+  <div class="footer"><span id="business-note">Demo Office Store · Fictional policies and demonstration orders</span> · <a href="/admin/inbox" target="_blank" rel="noopener">Staff inbox ↗</a></div>
+</div>
+<script>
+  const messages = document.querySelector('#messages');
+  const input = document.querySelector('#question');
+  const form = document.querySelector('#form');
+  const send = document.querySelector('#send');
+  let busy = false;
+  let conversationId = null;
+  let retryRequest = null;
+  let lastMessageCount = 0;
+  async function api(url, options = {}) {
+    const response = await fetch(url, {credentials:'same-origin', ...options});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'The service could not complete this request. Please try again.');
+    return data;
+  }
+  function addMessage(role, text) {
+    const item = document.createElement('div'); item.className = 'message ' + role;
+    const label = document.createElement('div'); label.className = 'label'; label.textContent = role === 'user' ? 'You' : role === 'staff' ? 'Support team' : 'Support assistant';
+    const bubble = document.createElement('div'); bubble.className = 'bubble';
+    // Build formatting with text nodes so model and customer text cannot inject HTML.
+    for (const part of text.split(/(\*\*[^*]+\*\*)/g)) {
+      if (part.startsWith('**') && part.endsWith('**')) { const strong = document.createElement('strong'); strong.textContent = part.slice(2,-2); bubble.append(strong); }
+      else bubble.append(document.createTextNode(part));
+    }
+    item.append(label, bubble); messages.append(item); messages.scrollTop = messages.scrollHeight; return item;
+  }
+  function welcome() { addMessage('assistant', 'Hi! What can I help you with today? Choose a topic on the left, or type your support question below.'); }
+  function setBusy(value) { busy = value; send.disabled = value; input.disabled = value; document.querySelector('#clear').disabled = value; document.querySelectorAll('.topic').forEach(b => b.disabled = value); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
+  function showDetails(item, data) {
+    const meta = document.createElement('div'); meta.className = 'metadata';
+    const badge = document.createElement('span'); badge.className = 'badge' + (data.handoff ? ' handoff' : ''); badge.textContent = data.handoff ? (data.ticket_id ? 'Saved for support review' : 'Request declined') : 'Answered'; meta.append(badge);
+    if (data.ticket_id) { const ticket = document.createElement('span'); ticket.className = 'badge handoff'; ticket.textContent = 'Ticket ' + data.ticket_id; meta.append(ticket); }
+    item.append(meta);
+    if (data.citations?.length) {
+      const details = document.createElement('details'); const summary = document.createElement('summary'); summary.textContent = 'View sources (' + data.citations.length + ')'; details.append(summary);
+      for (const citation of data.citations) {
+        const source = document.createElement('div'); source.className = 'source'; const title = document.createElement('strong'); title.textContent = citation.source_title || citation.source_id;
+        const text = document.createElement('p'); text.textContent = citation.chunk; source.append(title, text);
+        if (citation.url && /^https?:\/\//i.test(citation.url)) { const link = document.createElement('a'); link.href = citation.url; link.textContent = 'Open source ↗'; link.target = '_blank'; link.rel = 'noopener noreferrer'; source.append(link); }
+        details.append(source);
+      }
+      item.append(details);
+    }
+    messages.scrollTop = messages.scrollHeight;
+  }
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); const question = input.value.trim(); if (!question || busy || !conversationId) return;
+    const sameRetry = retryRequest?.message === question && retryRequest?.conversation_id === conversationId;
+    if (!sameRetry) addMessage('user', question);
+    retryRequest = sameRetry ? retryRequest : {conversation_id:conversationId, message:question, request_id:crypto.randomUUID()};
+    input.value = ''; setBusy(true);
+    const pending = addMessage('assistant', 'Checking the support documents…');
+    try {
+      const data = await api('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(retryRequest), signal:AbortSignal.timeout(210000)});
+      pending.remove(); const item = addMessage('assistant', data.answer || 'Your request has been received.'); showDetails(item, data);
+      retryRequest = null;
+      const saved = await api('/api/conversations/' + conversationId).catch(() => null); if (saved) lastMessageCount = saved.messages.length;
+    } catch (error) {
+      pending.remove(); const text = error.name === 'TimeoutError' ? 'The request took too long. Please try again.' : error instanceof TypeError ? 'Could not reach the support service. Check your connection and try again.' : error.message;
+      addMessage('error', text); input.value = question;
+    } finally { setBusy(false); input.focus(); }
+  });
+  input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } });
+  document.querySelectorAll('.topic').forEach(button => button.addEventListener('click', () => { input.value = button.dataset.question; form.requestSubmit(); }));
+  async function startNew() {
+    const data = await api('/api/conversations', {method:'POST'}); conversationId = data.conversation_id;
+    localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren(); welcome();
+  }
+  document.querySelector('#clear').addEventListener('click', async () => {
+    if (busy) return; setBusy(true);
+    try { await startNew(); } catch (error) { addMessage('error', error.message); }
+    finally { setBusy(false); input.focus(); }
+  });
+  async function refreshHistory(force = false) {
+    if (!conversationId || busy) return;
+    const requestedId = conversationId;
+    const data = await api('/api/conversations/' + requestedId);
+    if (busy || requestedId !== conversationId) return;
+    if (force || data.messages.length !== lastMessageCount) {
+      messages.replaceChildren(); if (!data.messages.length) welcome();
+      data.messages.forEach(message => { const item = addMessage(message.role, message.content); if (message.result) showDetails(item, message.result); }); lastMessageCount = data.messages.length;
+    }
+  }
+  async function initialize() {
+    setBusy(true);
+    try {
+      const session = await api('/api/session', {method:'POST'});
+      document.querySelector('#business-note').textContent = session.business_name + (session.business_mode === 'demo' ? ' · Demonstration with fictional policies and orders' : ' · Support grounded in approved documents');
+      const savedId = localStorage.getItem('support_conversation');
+      conversationId = session.conversations.find(c => c.id === savedId)?.id || session.conversations[0]?.id;
+      if (!conversationId) await startNew();
+      else { setBusy(false); await refreshHistory(true); }
+      document.querySelector('#status').dataset.state = 'online'; document.querySelector('#status-text').textContent = 'Connected · Chats saved';
+    } catch (error) {
+      document.querySelector('#status').dataset.state = 'offline'; document.querySelector('#status-text').textContent = 'Service unavailable'; addMessage('error', error.message);
+    } finally { setBusy(false); if (!conversationId) { input.disabled = true; send.disabled = true; } }
+  }
+  setInterval(() => { if (!document.hidden) refreshHistory().catch(() => {}); }, 12000);
+  initialize();
+</script>
+</body>
+</html>

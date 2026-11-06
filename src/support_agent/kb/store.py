@@ -5,8 +5,8 @@ with an HNSW index on the embedding for cosine distance. Retrieval returns the
 chunk text *and* its source, because an answer is only allowed to cite chunks it
 actually retrieved.
 
-The store degrades to an in-memory fallback when no database is reachable, so the
-repo is runnable and testable without Postgres. The fallback does a brute-force
+An in-memory fallback is available only when persistence is explicitly disabled,
+so isolated tests run without Postgres. The fallback does a brute-force
 cosine scan over the ingested chunks; the pgvector path is what runs in
 production.
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from support_agent.config import get_settings
@@ -24,7 +25,7 @@ try:
     from pgvector.psycopg import register_vector
 
     _PSYCOPG_AVAILABLE = True
-except Exception:  # pragma: no cover - only when psycopg is absent
+except ImportError:  # pragma: no cover - only when psycopg is absent
     _PSYCOPG_AVAILABLE = False
 
 
@@ -36,6 +37,7 @@ class Chunk:
     text: str
     embedding: list[float] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
+    active: bool = True
 
 
 @dataclass
@@ -56,17 +58,45 @@ class VectorStore:
         self._conn = None
         self._memory: list[Chunk] = []
         self._use_db = _PSYCOPG_AVAILABLE and self._try_connect()
+        if not self._use_db and (
+            self.settings.persistence_enabled or self.settings.app_env == "production"
+        ):
+            raise RuntimeError(
+                "PostgreSQL knowledge storage is unavailable; refusing memory fallback."
+            )
 
     # --- connection -----------------------------------------------------------
     def _try_connect(self) -> bool:
         try:
-            self._conn = psycopg.connect(self.settings.database_url, autocommit=True)
-            self._ensure_schema()
+            self._conn = psycopg.connect(
+                self.settings.database_url, autocommit=True, connect_timeout=10
+            )
+            if self.settings.app_env != "production":
+                self._ensure_schema()
             register_vector(self._conn)
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    "SELECT format_type(atttypid,atttypmod) FROM pg_attribute WHERE attrelid='kb_chunks'::regclass AND attname='embedding'"
+                )
+                if cur.fetchone()[0] != f"vector({self.settings.embedding_dim})":
+                    raise RuntimeError(
+                        "Knowledge embedding dimension does not match configuration."
+                    )
+            self._conn.close()
+            self._conn = None
             return True
-        except Exception:
+        except (psycopg.Error, RuntimeError, ValueError, TypeError):
+            if self._conn is not None:
+                self._conn.close()
             self._conn = None
             return False
+
+    @contextmanager
+    def _cursor(self):
+        from support_agent.db import connection
+
+        with connection() as conn, conn.cursor() as cur:
+            yield cur
 
     def _ensure_schema(self) -> None:
         dim = self.settings.embedding_dim
@@ -92,8 +122,9 @@ class VectorStore:
                     ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb
                 """
             )
+            cur.execute("ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS content_hash TEXT")
             cur.execute(
-                "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS content_hash TEXT"
+                "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
             )
             cur.execute(
                 """
@@ -127,33 +158,36 @@ class VectorStore:
                 ON kb_chunks (source_id, content_hash)
                 """
             )
-            cur.execute(
-                """
-                CREATE INDEX IF NOT EXISTS kb_chunks_embedding_hnsw
-                ON kb_chunks USING hnsw (embedding vector_cosine_ops)
-                """
-            )
+            if dim <= 2000:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS kb_chunks_embedding_hnsw ON kb_chunks USING hnsw (embedding vector_cosine_ops)"
+                )
 
     # --- writes ---------------------------------------------------------------
     def upsert(self, chunks: list[Chunk]) -> int:
         """Insert chunks. Returns the count written."""
         if not chunks:
             return 0
+        sources = {chunk.source_id for chunk in chunks}
         if self._use_db:
-            with self._conn.cursor() as cur:
+            with self._cursor() as cur:
+                cur.execute(
+                    "UPDATE kb_chunks SET active=FALSE WHERE source_id=ANY(%s)", (list(sources),)
+                )
                 for c in chunks:
                     content_hash = self._content_hash(c.text)
                     cur.execute(
                         """
                         INSERT INTO kb_chunks
                             (source_id, source_title, url, text, embedding, metadata, content_hash)
-                        VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+                        VALUES (%s, %s, %s, %s, %s::vector, %s::jsonb, %s)
                         ON CONFLICT (source_id, content_hash) DO UPDATE SET
                             source_title = EXCLUDED.source_title,
                             url = EXCLUDED.url,
                             text = EXCLUDED.text,
                             embedding = EXCLUDED.embedding,
-                            metadata = EXCLUDED.metadata
+                            metadata = EXCLUDED.metadata,
+                            active = TRUE
                         """,
                         (
                             c.source_id,
@@ -166,11 +200,15 @@ class VectorStore:
                         ),
                     )
             return len(chunks)
+        for chunk in self._memory:
+            if chunk.source_id in sources:
+                chunk.active = False
         existing = {
             (chunk.source_id, self._content_hash(chunk.text)): index
             for index, chunk in enumerate(self._memory)
         }
         for chunk in chunks:
+            chunk.active = True
             key = (chunk.source_id, self._content_hash(chunk.text))
             if key in existing:
                 self._memory[existing[key]] = chunk
@@ -185,7 +223,7 @@ class VectorStore:
 
     def clear(self) -> None:
         if self._use_db:
-            with self._conn.cursor() as cur:
+            with self._cursor() as cur:
                 cur.execute("TRUNCATE kb_chunks")
         self._memory.clear()
 
@@ -197,17 +235,18 @@ class VectorStore:
         return self._search_memory(query_embedding, k)
 
     def _search_db(self, q: list[float], k: int) -> list[Retrieved]:
-        with self._conn.cursor() as cur:
+        with self._cursor() as cur:
             # 1 - cosine_distance = cosine_similarity, clamped to [0, 1].
             cur.execute(
                 """
                 SELECT source_id, source_title, url, text, metadata,
                        1 - (embedding <=> %s::vector) AS similarity
                 FROM kb_chunks
+                WHERE active=TRUE AND metadata->>'embedding_model'=%s AND metadata->>'embedding_provider'=%s
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (q, q, k),
+                (q, self.settings.embedding_model, self.settings.embedding_provider, q, k),
             )
             rows = cur.fetchall()
         return [
@@ -237,16 +276,20 @@ class VectorStore:
                 metadata=c.metadata,
             )
             for c in self._memory
+            if c.active
         ]
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[:k]
 
     def count(self) -> int:
         if self._use_db:
-            with self._conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM kb_chunks")
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM kb_chunks WHERE active=TRUE AND metadata->>'embedding_model'=%s AND metadata->>'embedding_provider'=%s",
+                    (self.settings.embedding_model, self.settings.embedding_provider),
+                )
                 return int(cur.fetchone()[0])
-        return len(self._memory)
+        return sum(chunk.active for chunk in self._memory)
 
 
 _STORE: VectorStore | None = None
@@ -263,6 +306,4 @@ def dump_memory(path: str) -> None:
     """Persist the in-memory store to JSON (used by ingest when no DB is up)."""
     store = get_store()
     with open(path, "w", encoding="utf-8") as fh:
-        json.dump(
-            [c.__dict__ for c in store._memory], fh
-        )  # noqa: SLF001 - deliberate serialization helper
+        json.dump([c.__dict__ for c in store._memory], fh)
