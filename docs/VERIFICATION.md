@@ -6,6 +6,12 @@ Staff can open http://127.0.0.1:8001/admin/inbox and use the private
 
 ## Checks completed
 
+- Greeting regression update: 150 automated tests passed, with 3 opt-in
+  database tests skipped. Greeting routing now accepts casual word order,
+  punctuation, and forms of address using a full-turn grammar rather than an
+  exact phrase list. Tests include the reported `hey bro what you are doing/`
+  and ensure mixed support or unsafe requests still reach their normal gates.
+
 - Conversation-scope update: 122 automated tests passed, with the same 3
   opt-in database integration tests skipped. The new regression cases cover
   insult-only redirects, unrelated questions, profanity within genuine support

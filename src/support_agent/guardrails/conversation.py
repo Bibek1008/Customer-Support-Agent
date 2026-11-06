@@ -20,6 +20,17 @@ _REDIRECT = (
     "I'm here to help with store support. I can help with orders, returns, "
     "shipping, billing, accounts, and products. What issue are you having?"
 )
+_ADDRESS = r"(?:hi|hey|hello|bro|man|dude|there)"
+_SMALL_TALK = re.compile(
+    rf"(?:{_ADDRESS} )*(?:"
+    r"hi|hey|hello|good morning|good evening|"
+    r"what (?:are|r) (?:you|u) doing|what (?:you|u) (?:are|r) doing|"
+    r"what (?:you|u) doing|whats up|what is up|sup|"
+    r"how (?:are|r) (?:you|u)|how (?:is it|its) going|"
+    r"what can you do|how can you help"
+    rf")(?: {_ADDRESS})*"
+)
+_THANKS = re.compile(r"(?:thanks|thank you)(?: (?:bro|man|dude))*")
 _INSULT_ONLY = re.compile(
     r"(?:(?:fuck|screw) (?:you|u)|(?:you(?:re| are)? )?(?:an? )?"
     r"(?:idiot|moron|asshole|stupid|useless)|shut (?:the fuck )?up|fuck off)"
@@ -49,6 +60,18 @@ _OFF_TOPIC = re.compile(
 
 def route_conversation(text: str, history: list[Message]) -> ConversationReply | None:
     normalized = " ".join(re.sub(r"[^a-z0-9\s]", "", text.lower()).split())
+    # Full-turn grammar permits casual word order and forms of address, but a
+    # greeting prefix never swallows a real support request or unsafe content.
+    if _SMALL_TALK.fullmatch(normalized):
+        return ConversationReply(
+            "greeting",
+            "Hi! I'm here to help with orders, returns, shipping, billing, and "
+            "product questions. What can I help you with?",
+        )
+    if _THANKS.fullmatch(normalized):
+        return ConversationReply(
+            "thanks", "You're welcome! Let me know if you have another support question."
+        )
     if normalized in _FOLLOWUPS:
         # Only the most recent assistant reply is authoritative for this follow-up.
         previous = next((m.content for m in reversed(history) if m.role == Role.ASSISTANT), "")

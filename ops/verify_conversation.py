@@ -1,5 +1,6 @@
 """Verify local scope redirects, persistence, and absence of accidental tickets."""
 
+import argparse
 import json
 import time
 from uuid import uuid4
@@ -12,6 +13,9 @@ from support_agent.repository import get_repository
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--greeting-only", action="store_true")
+    args = parser.parse_args()
     settings = get_settings()
     headers = {"Authorization": "Bearer " + settings.admin_api_key}
     cases = []
@@ -28,12 +32,18 @@ def main():
         response = client.post("/api/conversations")
         response.raise_for_status()
         conversation_id = response.json()["conversation_id"]
-        for message in [
-            "fuck you bro",
-            "really do you think this will happen?",
-            "tell me a joke",
-            "What is the weather today?",
-        ]:
+        messages = (
+            ["hey bro what you are doing/"]
+            if args.greeting_only
+            else [
+                "hey bro what you are doing/",
+                "fuck you bro",
+                "really do you think this will happen?",
+                "tell me a joke",
+                "What is the weather today?",
+            ]
+        )
+        for message in messages:
             response = client.post(
                 "/chat",
                 json={
@@ -46,17 +56,19 @@ def main():
             data = response.json()
             assert not data["handoff"] and data["ticket_id"] is None
             assert not data["citations"]
+            if args.greeting_only:
+                assert "What can I help you with?" in data["answer"]
             cases.append({"message": message, "answer": data["answer"], "passed": True})
         history = client.get("/api/conversations/" + conversation_id)
         history.raise_for_status()
-        assert len(history.json()["messages"]) == 8
+        assert len(history.json()["messages"]) == 2 * len(messages)
         tickets = client.get("/api/admin/tickets", headers=headers)
         tickets.raise_for_status()
         assert not any(str(t["conversation_id"]) == conversation_id for t in tickets.json())
         activity = client.get("/api/admin/activity", headers=headers)
         activity.raise_for_status()
         turns = [t for t in activity.json() if str(t["conversation_id"]) == conversation_id]
-        assert len(turns) == 4
+        assert len(turns) == len(messages)
         assert all(
             any(s["name"] == "conversation_scope" for s in t["trace"]["spans"]) for t in turns
         )

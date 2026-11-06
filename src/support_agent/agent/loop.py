@@ -93,44 +93,7 @@ def run_turn(
         trace.messages.append(Message(role=Role.ASSISTANT, content=conversation_reply.message))
         return trace
 
-    # A fixed capability greeting makes no unsupported company-policy claims.
-    # Match the entire input so a greeting cannot bypass a real support request.
     normalized = re.sub(r"[^a-z0-9 ]", "", redacted.text.lower()).strip()
-    greetings = {
-        "hi",
-        "hello",
-        "hey",
-        "hey bro",
-        "hello there",
-        "good morning",
-        "good evening",
-        "what can you do",
-        "how can you help",
-        "what are you doing",
-        "hey what are you doing",
-        "hey what are you doing bro",
-        "hey what you are doing bro",
-        "what you are doing",
-        "thanks",
-        "thank you",
-        "thanks bro",
-    }
-    if normalized in greetings:
-        text = "Hi! I can help with returns, shipping, billing, and product questions. What would you like help with?"
-        if normalized in {"thanks", "thank you", "thanks bro"}:
-            text = "You're welcome! Let me know if you have another support question."
-        with guardrail_span("static_response") as span:
-            span.set(
-                "guardrail.static_response", "Fixed support template; no model-generated content."
-            )
-        trace.decision = Decision(
-            type=DecisionType.ANSWER,
-            answer=text,
-            confidence=1.0,
-            threshold=settings.handoff_threshold,
-        )
-        trace.messages.append(Message(role=Role.ASSISTANT, content=text))
-        return trace
 
     # 2. Input guardrail: disallowed or out of scope -> refuse without a loop.
     gate = refusal.check_input(redacted.text)

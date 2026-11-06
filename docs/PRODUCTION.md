@@ -8,6 +8,9 @@ without creating another ticket or promising a staff response time. These are
 conservative routing rules, not a universal semantic classifier; unknown wording
 continues through the existing safety and support flow. The `conversation_scope`
 guardrail records the routing category in request traces and database audit events.
+Greeting routing matches complete turns with casual word order and forms of
+address; greeting prefixes attached to real requests do not bypass support or
+safety checks. This is still a conservative rule-based router.
 
 `ANSWER_MODE=extractive` is the default: the model routes requests and retrieves
 context, then factual answers quote an approved document or authorized order

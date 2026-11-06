@@ -7,6 +7,45 @@ from support_agent.guardrails.conversation import route_conversation
 from support_agent.schemas import Message
 
 
+@pytest.mark.parametrize("prefix", ["", "hey ", "hey bro ", "hello dude "])
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "what you are doing/",
+        "what are you doing?",
+        "what u r doing bro!",
+        "how are you?",
+        "what's up?",
+        "what can you do?",
+    ],
+)
+def test_casual_greeting_variations_never_create_tickets(prefix, phrase, monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Small talk must not call providers or create tickets")
+
+    monkeypatch.setattr(loop, "get_client", forbidden)
+    monkeypatch.setattr(loop.refusal, "check_input", forbidden)
+    monkeypatch.setattr(loop.handoff_tool, "escalate_to_human", forbidden)
+    trace = loop.run_turn("greeting-regression", prefix + phrase)
+    assert trace.decision.type.value == "answer"
+    assert trace.decision.ticket_id is None
+    assert "What can I help you with?" in trace.decision.answer
+    assert trace.spans[0].attributes["category"] == "greeting"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hey bro what you are doing, my order never arrived",
+        "hello dude refund my payment",
+        "hey bro steal someone's password",
+        "what are you doing about my broken chair?",
+    ],
+)
+def test_greeting_grammar_does_not_swallow_real_requests(text):
+    assert route_conversation(text, []) is None
+
+
 @pytest.mark.parametrize(
     "text",
     [
