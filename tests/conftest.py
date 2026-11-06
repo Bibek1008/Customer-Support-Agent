@@ -80,10 +80,47 @@ def make_client():
 # Common words carry no topic signal; dropping them keeps disjoint-topic texts
 # near-orthogonal under the bag-of-words fake embedder.
 _STOPWORDS = {
-    "a", "an", "the", "of", "to", "is", "are", "and", "or", "in", "on", "for",
-    "you", "your", "we", "it", "within", "after", "any", "how", "long", "do",
-    "i", "my", "me", "can", "what", "please", "help", "will", "see", "was",
-    "have", "has", "with", "that", "this", "from", "at", "be", "as",
+    "a",
+    "an",
+    "the",
+    "of",
+    "to",
+    "is",
+    "are",
+    "and",
+    "or",
+    "in",
+    "on",
+    "for",
+    "you",
+    "your",
+    "we",
+    "it",
+    "within",
+    "after",
+    "any",
+    "how",
+    "long",
+    "do",
+    "i",
+    "my",
+    "me",
+    "can",
+    "what",
+    "please",
+    "help",
+    "will",
+    "see",
+    "was",
+    "have",
+    "has",
+    "with",
+    "that",
+    "this",
+    "from",
+    "at",
+    "be",
+    "as",
 }
 
 
@@ -149,6 +186,18 @@ def _isolate(monkeypatch):
     monkeypatch.setenv("SAFETY_PROVIDER", "server")
     monkeypatch.setenv("ALLOW_FIXTURE_ORDERS", "1")
     monkeypatch.setenv("ANSWER_MODE", "generated")
+    # Most tests exercise downstream support behavior independently of routing.
+    # Semantic classifier tests supply structured provider responses explicitly.
+    import support_agent.agent.loop as loop_mod
+    from support_agent.guardrails.conversation import Intent, IntentResult
+
+    monkeypatch.setattr(
+        loop_mod,
+        "classify_intent",
+        lambda *_: IntentResult(
+            intent=Intent.SUPPORT, phone_requested=False, reason="isolated support flow"
+        ),
+    )
     from support_agent.config import get_settings
 
     get_settings.cache_clear()

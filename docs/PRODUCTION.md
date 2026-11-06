@@ -1,21 +1,28 @@
 # Demo Office Store deployment and operations
 
-The local conversation guardrail redirects recognized insult-only and clearly
-unrelated turns without opening tickets or spending model quota. Profanity in
-a genuine support request continues through the safety and support gates.
-Recognized follow-ups to the latest saved handoff explain the existing reference
-without creating another ticket or promising a staff response time. These are
-conservative routing rules, not a universal semantic classifier; unknown wording
-continues through the existing safety and support flow. The `conversation_scope`
-guardrail records the routing category in request traces and database audit events.
-Greeting routing matches complete turns with casual word order and forms of
-address; greeting prefixes attached to real requests do not bypass support or
-safety checks. This is still a conservative rule-based router.
+The conversation guardrail uses the configured classifier model with a strict
+JSON schema to interpret the latest message and eight recent messages. It has
+no greeting, insult, or scope keyword lists. PII is redacted before classification.
+It separates real support issues, social messages, unrelated requests, unclear
+intent, human/contact requests, existing-handoff follow-ups, identity recovery,
+pricing, and unsafe requests. Real support issues with profanity continue through
+the safety and support gates. Classification failure returns a retryable provider
+error; it never defaults to ticket creation or phrase matching.
+
+Routing categories map to controlled responses/actions. These response templates
+are intentional; intent detection itself is model-based. Human requests create a
+staff ticket, or refer to an existing saved reference in this conversation. No
+verified support phone number is configured for this demo, so the assistant says
+so rather than inventing one. It does not promise a live transfer or reply time.
+`classify-intent` records model input/output, usage and cost; `conversation_scope`
+records the validated category in traces and database audit events. Every turn
+now uses classifier quota, including greetings. Models can still misclassify;
+run `python ops/verify_intent.py` to measure the included live routing cases.
 
 `ANSWER_MODE=extractive` is the default: the model routes requests and retrieves
 context, then factual answers quote an approved document or authorized order
-record. Identity-recovery requests require a saved staff ticket. Static greetings,
-thanks, and clarification templates do not call a model. Generated prose remains
+record. Identity-recovery requests require a saved staff ticket. Greetings and
+clarifications use controlled replies after semantic classification. Generated prose remains
 an explicit optional mode and is not the mode validated for this demonstration.
 An extractive grounding score of 1 means a source was quoted exactly; it is not
 a calibrated probability of relevance or resolution.

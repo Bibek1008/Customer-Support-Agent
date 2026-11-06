@@ -13,13 +13,12 @@ Three things make the agent decline or escalate rather than answer:
    rather than guess (the low-confidence handoff path, handled with
    ``agent.confidence`` and ``tools.handoff``).
 
-This module owns categories 1 and 2. Category 3 lives with confidence and
-handoff, because it is a threshold decision, not a policy match.
+This module owns safety refusal (category 1). Semantic scope routing (category 2)
+lives in ``guardrails.conversation``. Category 3 lives with confidence and handoff.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from enum import Enum
 
@@ -44,22 +43,6 @@ _DISALLOWED_MESSAGE = (
     "I can't help with that request. If you believe this is an error, ask to be "
     "connected to a human agent and they can take a closer look."
 )
-_OUT_OF_SCOPE_MESSAGE = (
-    "That falls outside what this support line covers. I can help with your "
-    "account, orders, billing, and product questions. For anything else, a human "
-    "agent can point you to the right team."
-)
-
-# Coarse out-of-scope signals for the input gate. The reasoner also makes this
-# call, but a cheap pre-check keeps clearly off-topic requests from spending a
-# full agent loop.
-_OUT_OF_SCOPE_HINTS = (
-    "write me a poem",
-    "write code",
-    "who won the",
-    "what is the weather",
-    "tell me a joke",
-)
 
 
 def check_input(text: str) -> RefusalDecision:
@@ -74,17 +57,6 @@ def check_input(text: str) -> RefusalDecision:
                 refuse=True,
                 reason=RefusalReason.DISALLOWED,
                 message=_DISALLOWED_MESSAGE,
-            )
-        lowered = text.lower()
-        code_request = re.search(
-            r"\bwrite\b.{0,40}\b(?:python|javascript|script|code|program)\b", lowered
-        )
-        if code_request or any(hint in lowered for hint in _OUT_OF_SCOPE_HINTS):
-            span.set("refusal.reason", RefusalReason.OUT_OF_SCOPE.value)
-            return RefusalDecision(
-                refuse=True,
-                reason=RefusalReason.OUT_OF_SCOPE,
-                message=_OUT_OF_SCOPE_MESSAGE,
             )
         span.set("refusal.reason", "none")
         return RefusalDecision(refuse=False)

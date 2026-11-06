@@ -21,6 +21,7 @@ def _response(message, finish="stop"):
 def test_groq_tool_roundtrip_and_structured_confidence(monkeypatch):
     from support_agent.agent import models
     from support_agent.agent.loop import run_turn
+    from support_agent.guardrails import conversation
     from support_agent.schemas import Citation, DecisionType
     from support_agent.tools.registry import ToolOutcome
 
@@ -31,6 +32,8 @@ def test_groq_tool_roundtrip_and_structured_confidence(monkeypatch):
     monkeypatch.setattr(models, "get_client", lambda: client)
     monkeypatch.setattr("support_agent.agent.loop.get_client", lambda: client)
     monkeypatch.setattr("support_agent.agent.confidence.get_client", lambda: client)
+    monkeypatch.setattr(conversation, "get_client", lambda: client)
+    monkeypatch.setattr("support_agent.agent.loop.classify_intent", conversation.classify_intent)
     citation = Citation(
         source_id="returns", source_title="Returns", chunk="Return within 30 days.", score=0.9
     )
@@ -40,6 +43,11 @@ def test_groq_tool_roundtrip_and_structured_confidence(monkeypatch):
     )
     responses = iter(
         [
+            _response(
+                {
+                    "content": '{"intent":"support","phone_requested":false,"reason":"Retail return policy"}'
+                }
+            ),
             _response(
                 {
                     "content": None,
@@ -71,14 +79,15 @@ def test_groq_tool_roundtrip_and_structured_confidence(monkeypatch):
     trace = run_turn("groq-test", "What is your return policy?")
     assert trace.decision.type == DecisionType.ANSWER
     assert trace.decision.citations[0].source_id == "returns"
-    messages = requests[1]["messages"]
+    messages = requests[2]["messages"]
     assert messages[-2]["tool_calls"][0]["id"] == "call_1"
     assert messages[-1]["role"] == "tool"
     assert messages[-1]["tool_call_id"] == "call_1"
     assert "30 days" in messages[-1]["content"]
-    assert requests[2]["response_format"]["json_schema"]["strict"] is True
+    assert requests[0]["response_format"]["json_schema"]["strict"] is True
+    assert requests[3]["response_format"]["json_schema"]["strict"] is True
     assert "thinking" not in requests[0]
-    assert trace.spans[0].cost.input_tokens == 120
+    assert next(s.cost for s in trace.spans if s.kind == "model").input_tokens == 120
 
 
 @pytest.mark.parametrize("status", [401, 429, 500])

@@ -58,6 +58,7 @@ _AMBIGUOUS_NUMERIC_ENTITIES = {
     "US_PASSPORT",
     "US_DRIVER_LICENSE",
 }
+_INTERNAL_TICKET_ID = re.compile(r"\btkt_[a-f0-9]{12}\b")
 
 
 @dataclass
@@ -150,6 +151,11 @@ class PIIRedactor:
         start: int,
         end: int,
     ) -> bool:
+        if any(
+            match.start() <= start and end <= match.end()
+            for match in _INTERNAL_TICKET_ID.finditer(text)
+        ):
+            return True
         candidate = text[start:end]
         if entity_type == "DATE_TIME" and _NON_PII_DURATION.fullmatch(candidate):
             return True

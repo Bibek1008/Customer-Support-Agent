@@ -27,7 +27,12 @@ from support_agent.agent.models import get_client, reasoner_kwargs
 from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
 from support_agent.guardrails import refusal
-from support_agent.guardrails.conversation import route_conversation
+from support_agent.guardrails.conversation import (
+    Intent,
+    classify_intent,
+    conversational_reply,
+    existing_handoff,
+)
 from support_agent.guardrails.injection import quarantine_tool_output
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.cost import cost_from_usage
@@ -73,27 +78,35 @@ def run_turn(
     ]
     trace.messages = [*prior, incoming]
 
-    conversation_reply = route_conversation(redacted.text, prior)
-    if conversation_reply is not None:
-        with guardrail_span("conversation_scope") as span:
-            span.set("guardrail.conversation_category", conversation_reply.category)
+    intent = classify_intent(redacted.text, prior)
+    if intent._cost_record is not None:
         trace.spans.append(
             SpanRecord(
-                name="conversation_scope",
-                kind="guardrail",
-                attributes={"category": conversation_reply.category},
+                name="classify-intent",
+                kind="model",
+                cost=intent._cost_record,
+                attributes={"intent": intent.intent.value},
             )
         )
+    with guardrail_span("conversation_scope") as span:
+        span.set("guardrail.conversation_category", intent.intent.value)
+    trace.spans.append(
+        SpanRecord(
+            name="conversation_scope",
+            kind="guardrail",
+            attributes={"category": intent.intent.value},
+        )
+    )
+    conversation_reply = conversational_reply(intent, prior)
+    if conversation_reply is not None:
         trace.decision = Decision(
             type=DecisionType.ANSWER,
-            answer=conversation_reply.message,
+            answer=conversation_reply,
             confidence=1.0,
             threshold=settings.handoff_threshold,
         )
-        trace.messages.append(Message(role=Role.ASSISTANT, content=conversation_reply.message))
+        trace.messages.append(Message(role=Role.ASSISTANT, content=conversation_reply))
         return trace
-
-    normalized = re.sub(r"[^a-z0-9 ]", "", redacted.text.lower()).strip()
 
     # 2. Input guardrail: disallowed or out of scope -> refuse without a loop.
     gate = refusal.check_input(redacted.text)
@@ -102,10 +115,42 @@ def run_turn(
         trace.messages.append(Message(role=Role.ASSISTANT, content=gate.message))
         return trace
 
-    if settings.pricing_requires_review and re.search(
-        r"\b(?:discounts?|competitors?|promotions?|coupons?)\b|price match|promo code|best deal",
-        normalized,
-    ):
+    if intent.intent == Intent.HUMAN:
+        reference = existing_handoff(prior)
+        prefix = (
+            "I don't have a verified support phone number to share. "
+            if intent.phone_requested
+            else ""
+        )
+        if reference:
+            text = (
+                prefix
+                + f"Your existing request is saved for staff review. Your reference is {reference}. You can check this chat for a reply; a response time isn't guaranteed."
+            )
+            trace.decision = Decision(
+                type=DecisionType.ANSWER,
+                answer=text,
+                confidence=1.0,
+                threshold=settings.handoff_threshold,
+            )
+            trace.messages.append(Message(role=Role.ASSISTANT, content=text))
+        else:
+            trace.decision = _handoff(
+                trace,
+                "Customer requested a human agent.",
+                0.0,
+                settings.handoff_threshold,
+                customer_id,
+            )
+            text = (
+                prefix
+                + f"I've saved your request to speak with staff. Your reference is {trace.decision.ticket_id}. You can check this chat for a staff reply; a response time isn't guaranteed."
+            )
+            trace.decision.answer = text
+            trace.messages[-1].content = text
+        return trace
+
+    if settings.pricing_requires_review and intent.intent == Intent.PRICING:
         trace.decision = _handoff(
             trace,
             "Pricing and promotions require staff review; no approved pricing policy is connected.",
@@ -115,9 +160,7 @@ def run_turn(
         )
         return trace
 
-    if re.search(
-        r"(?:lost access|no longer.{0,12}access|cant access|cannot access)", normalized
-    ) and re.search(r"email|second factor|authenticator|two factor|2fa", normalized):
+    if intent.intent == Intent.ACCOUNT_RECOVERY:
         trace.decision = _handoff(
             trace,
             "Account recovery requires staff identity verification.",

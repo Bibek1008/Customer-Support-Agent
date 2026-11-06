@@ -6,6 +6,25 @@ Staff can open http://127.0.0.1:8001/admin/inbox and use the private
 
 ## Checks completed
 
+- Current routing implementation supersedes the phrase/grammar-based versions
+  below: customer intent is classified by the configured model using structured
+  JSON and recent conversation history. No customer keyword matcher remains in
+  the conversation router. Replies and tool permissions remain controlled by code.
+  The revised automated suite passed 131 tests, with 3 opt-in database tests
+  skipped. Provider translation tests also passed separately after adding the
+  intent call to the mocked Groq round trip. Mocked tests validate parsing and
+  action boundaries; they do not measure semantic accuracy.
+- Real semantic evaluation: 15/15 cases passed, including paraphrases, profanity
+  within a real delivery problem, the reported human-plus-phone request, a
+  handoff follow-up, unrelated knowledge requests, and prompt injection.
+  Database report: `fb54c1f4-555c-48bd-b37c-fbab28f19ee0`. This is a small
+  regression set, not evidence that all future messages will be classified correctly.
+- Live HTTP human/phone regression passed: the exact reported request created
+  one staff ticket, explicitly stated that no verified phone number was
+  available, and its follow-up reused the same reference. Saved history contained
+  both turns and staff inbox contained exactly one ticket for that conversation.
+  Database report: `d7e2c5a3-dd0d-4da4-a1c9-9d9307795c26`.
+
 - Greeting regression update: 150 automated tests passed, with 3 opt-in
   database tests skipped. Greeting routing now accepts casual word order,
   punctuation, and forms of address using a full-turn grammar rather than an

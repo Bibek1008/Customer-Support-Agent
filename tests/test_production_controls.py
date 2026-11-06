@@ -18,15 +18,22 @@ from support_agent.request_context import (
 @pytest.mark.parametrize(
     "message", ["hi", "hey what are you doing?", "hey what you are doing bro?"]
 )
-def test_greeting_does_not_escalate_or_call_model(monkeypatch, message):
+def test_social_intent_does_not_escalate_or_call_reasoner(monkeypatch, message):
     from support_agent.agent import loop
 
     monkeypatch.setenv("SAFETY_MODEL_URL", "")
 
     def no_model():
-        raise AssertionError("A greeting should not require a model call")
+        raise AssertionError("A classified social turn should not call the support reasoner")
 
     monkeypatch.setattr(loop, "get_client", no_model)
+    from support_agent.guardrails.conversation import IntentResult
+
+    monkeypatch.setattr(
+        loop,
+        "classify_intent",
+        lambda *_: IntentResult(intent="social", phone_requested=False, reason="test"),
+    )
     result = loop.run_turn(str(uuid4()), message)
     assert result.decision.type.value == "answer"
     assert "billing" in result.decision.answer
@@ -50,6 +57,17 @@ def test_unapproved_pricing_and_code_requests_do_not_quote_unrelated_policy(monk
         raise AssertionError("These requests require a policy route, not invented details")
 
     monkeypatch.setattr(loop, "get_client", no_model)
+    from support_agent.guardrails.conversation import IntentResult
+
+    monkeypatch.setattr(
+        loop,
+        "classify_intent",
+        lambda *_: IntentResult(
+            intent="off_topic" if message.startswith("Write") else "pricing",
+            phone_requested=False,
+            reason="test",
+        ),
+    )
     result = loop.run_turn(str(uuid4()), message)
     assert result.decision.type.value == ("answer" if message.startswith("Write") else "handoff")
     assert not result.decision.citations
@@ -200,6 +218,13 @@ def test_identity_recovery_requires_a_real_saved_ticket(monkeypatch):
         raise AssertionError("Identity recovery must be routed to staff")
 
     monkeypatch.setattr(loop, "get_client", no_model)
+    from support_agent.guardrails.conversation import IntentResult
+
+    monkeypatch.setattr(
+        loop,
+        "classify_intent",
+        lambda *_: IntentResult(intent="account_recovery", phone_requested=False, reason="test"),
+    )
     result = loop.run_turn(
         "identity-test",
         "I lost access to the email on my account and my second factor. I need back in.",
@@ -208,9 +233,16 @@ def test_identity_recovery_requires_a_real_saved_ticket(monkeypatch):
     assert result.decision.ticket_id.startswith("tkt_")
 
 
-def test_followup_explains_existing_handoff_without_creating_another_ticket():
+def test_followup_explains_existing_handoff_without_creating_another_ticket(monkeypatch):
     from support_agent.agent import loop
+    from support_agent.guardrails.conversation import IntentResult
     from support_agent.schemas import Message
+
+    monkeypatch.setattr(
+        loop,
+        "classify_intent",
+        lambda *_: IntentResult(intent="handoff_followup", phone_requested=False, reason="test"),
+    )
 
     result = loop.run_turn(
         "followup-test",
@@ -218,7 +250,7 @@ def test_followup_explains_existing_handoff_without_creating_another_ticket():
         history=[
             Message(
                 role="assistant",
-                content="I couldn't verify an answer, so I've saved your request for support review.",
+                content="I couldn't verify an answer, so I've saved your request for support review. Your reference is tkt_54f3888d992e.",
             )
         ],
     )
