@@ -40,7 +40,9 @@ def main():
             )
             result.raise_for_status()
             data = result.json()
-            assert data["handoff"] is True
+            assert data["handoff"] is (not message.startswith("Write"))
+            if message.startswith("Write"):
+                assert data["ticket_id"] is None
             assert not data["citations"]
             cases.append({"message": message, "passed": True, "result": data})
     report = {

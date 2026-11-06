@@ -1,5 +1,14 @@
 # Demo Office Store deployment and operations
 
+The local conversation guardrail redirects recognized insult-only and clearly
+unrelated turns without opening tickets or spending model quota. Profanity in
+a genuine support request continues through the safety and support gates.
+Recognized follow-ups to the latest saved handoff explain the existing reference
+without creating another ticket or promising a staff response time. These are
+conservative routing rules, not a universal semantic classifier; unknown wording
+continues through the existing safety and support flow. The `conversation_scope`
+guardrail records the routing category in request traces and database audit events.
+
 `ANSWER_MODE=extractive` is the default: the model routes requests and retrieves
 context, then factual answers quote an approved document or authorized order
 record. Identity-recovery requests require a saved staff ticket. Static greetings,

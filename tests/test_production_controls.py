@@ -51,7 +51,7 @@ def test_unapproved_pricing_and_code_requests_do_not_quote_unrelated_policy(monk
 
     monkeypatch.setattr(loop, "get_client", no_model)
     result = loop.run_turn(str(uuid4()), message)
-    assert result.decision.type.value == "handoff"
+    assert result.decision.type.value == ("answer" if message.startswith("Write") else "handoff")
     assert not result.decision.citations
 
 

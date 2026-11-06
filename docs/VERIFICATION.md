@@ -6,6 +6,17 @@ Staff can open http://127.0.0.1:8001/admin/inbox and use the private
 
 ## Checks completed
 
+- Conversation-scope update: 122 automated tests passed, with the same 3
+  opt-in database integration tests skipped. The new regression cases cover
+  insult-only redirects, unrelated questions, profanity within genuine support
+  issues, and repeated follow-ups that preserve an existing ticket reference
+  without creating another ticket. The earlier PostgreSQL integration result
+  below predates this update.
+- Live conversation-scope check: 4/4 passed through HTTP with saved history,
+  recorded guardrail traces, and zero tickets created. Database report:
+  `d109ec73-8f3f-43ff-8b08-557f4ce3863f`. Existing-handoff follow-ups were
+  verified separately by the automated conversation-history regression tests.
+
 - Automated suite: 103 passed; 3 database integration tests skipped in the
   default run. Those 3 integration tests also passed in a separate real
   PostgreSQL run.

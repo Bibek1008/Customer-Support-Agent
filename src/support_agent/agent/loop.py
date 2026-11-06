@@ -27,6 +27,7 @@ from support_agent.agent.models import get_client, reasoner_kwargs
 from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
 from support_agent.guardrails import refusal
+from support_agent.guardrails.conversation import route_conversation
 from support_agent.guardrails.injection import quarantine_tool_output
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.cost import cost_from_usage
@@ -72,6 +73,26 @@ def run_turn(
     ]
     trace.messages = [*prior, incoming]
 
+    conversation_reply = route_conversation(redacted.text, prior)
+    if conversation_reply is not None:
+        with guardrail_span("conversation_scope") as span:
+            span.set("guardrail.conversation_category", conversation_reply.category)
+        trace.spans.append(
+            SpanRecord(
+                name="conversation_scope",
+                kind="guardrail",
+                attributes={"category": conversation_reply.category},
+            )
+        )
+        trace.decision = Decision(
+            type=DecisionType.ANSWER,
+            answer=conversation_reply.message,
+            confidence=1.0,
+            threshold=settings.handoff_threshold,
+        )
+        trace.messages.append(Message(role=Role.ASSISTANT, content=conversation_reply.message))
+        return trace
+
     # A fixed capability greeting makes no unsupported company-policy claims.
     # Match the entire input so a greeting cannot bypass a real support request.
     normalized = re.sub(r"[^a-z0-9 ]", "", redacted.text.lower()).strip()
@@ -93,18 +114,11 @@ def run_turn(
         "thanks",
         "thank you",
         "thanks bro",
-        "really why",
-        "why",
     }
     if normalized in greetings:
         text = "Hi! I can help with returns, shipping, billing, and product questions. What would you like help with?"
         if normalized in {"thanks", "thank you", "thanks bro"}:
             text = "You're welcome! Let me know if you have another support question."
-        if normalized in {"why", "really why"}:
-            previous = next((m.content for m in reversed(prior) if m.role == Role.ASSISTANT), "")
-            text = "Which part would you like me to explain?"
-            if "saved your request for support review" in previous:
-                text = "I couldn't verify an answer from the approved support information, so your request was saved for staff review. You can check this chat for a reply."
         with guardrail_span("static_response") as span:
             span.set(
                 "guardrail.static_response", "Fixed support template; no model-generated content."
