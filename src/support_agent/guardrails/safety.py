@@ -126,6 +126,12 @@ class SafetyClassifier:
         # server applies the Guard prompt template and returns a short verdict.
         messages = [{"role": role.value, "content": text}]
         groq = self.settings.safety_provider == "groq"
+        if groq:
+            from support_agent.agent.groq_client import inference_slot
+
+            slot = inference_slot()
+        else:
+            slot = nullcontext()
         if (
             groq
             and self.settings.gemini_fallback_enabled
@@ -145,7 +151,7 @@ class SafetyClassifier:
         payload = {
             "model": self.settings.safety_groq_model if groq else self.settings.safety_model_name,
             "messages": messages,
-            "max_tokens": 1024 if groq else 32,
+            "max_tokens": 512 if groq else 32,
         }
         if groq:
             payload.update(reasoning_effort="low", response_format={"type": "json_object"})
@@ -159,14 +165,15 @@ class SafetyClassifier:
             )
             cost = None
             with observation as span:
-                resp = httpx.post(
-                    url,
-                    headers={"Authorization": f"Bearer {self.settings.groq_api_key}"}
-                    if groq
-                    else {},
-                    json=payload,
-                    timeout=remaining_timeout(15),
-                )
+                with slot:
+                    resp = httpx.post(
+                        url,
+                        headers={"Authorization": f"Bearer {self.settings.groq_api_key}"}
+                        if groq
+                        else {},
+                        json=payload,
+                        timeout=remaining_timeout(15),
+                    )
                 if groq and resp.status_code == 429:
                     from support_agent.agent.groq_client import GroqRequestError
 

@@ -13,9 +13,10 @@
     main{display:grid;grid-template-columns:255px minmax(0,1fr);gap:24px}.sidebar{padding:15px 0}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;color:#78629e}
     h1{font-size:32px;line-height:1.2;letter-spacing:-1px;margin:14px 0}p{font-size:14px;line-height:1.7;color:#697381}.sidebar p{max-width:235px}
     .topics{margin:30px 0 20px;display:grid;gap:10px}.topic{text-align:left;border:1px solid #e0dce9;background:#fff;border-radius:10px;padding:13px 14px;font-size:13px;color:#4e3e71}.topic:hover{background:#f1ebfc;border-color:#c5b7e4}
+    .olist-demo{margin:18px 0;padding:13px;border:1px solid #e1e3e8;border-radius:10px;background:#fff}.olist-demo summary{font-size:13px}.olist-demo p{font-size:11px;line-height:1.5;margin:8px 0}.olist-demo select{width:100%;padding:8px;border:1px solid #ddd;border-radius:7px;background:#fff}.olist-demo button{margin-top:8px;border:0;border-radius:7px;padding:8px 10px;background:#6845c5;color:#fff;font-size:12px}
     .note{border-top:1px solid #e1e3e8;padding-top:16px;font-size:12px}.chat{background:#fff;border:1px solid #e1e4e9;border-radius:18px;box-shadow:0 8px 35px #20233506;overflow:hidden}
     .chat-header{padding:21px 25px;border-bottom:1px solid #edf0f3;display:flex;justify-content:space-between;align-items:center}.chat-header strong{font-size:15px}.chat-header small{display:block;color:#7a8593;font-size:12px;margin-top:5px}
-    .clear{border:1px solid #e3e6ec;border-radius:8px;padding:8px 12px;background:white;font-size:12px;color:#67717e}
+    .header-actions{display:flex;gap:8px}.clear{border:1px solid #e3e6ec;border-radius:8px;padding:8px 12px;background:white;font-size:12px;color:#67717e}
     .messages{height:480px;overflow-y:auto;padding:26px;display:flex;flex-direction:column;gap:22px;scroll-behavior:smooth}.message{max-width:94%;font-size:14px;line-height:1.75}.message .label{font-weight:650;color:#7d8591;font-size:11px;margin:0 0 7px;text-transform:uppercase;letter-spacing:.7px}.bubble{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f5f9;border-radius:3px 13px 13px;padding:15px 18px}
     .user{align-self:flex-end;max-width:88%}.user .label{text-align:right}.user .bubble{background:#6b49c7;color:#fff;border-radius:13px 3px 13px 13px}.error .bubble{background:#fff0f0;color:#a12f39}
     .metadata{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.badge{font-size:11px;background:#eff7f2;color:#2b7051;padding:3px 8px;border-radius:5px}.badge.handoff{background:#fff5e5;color:#8b6019}
@@ -37,10 +38,11 @@
         <button class="topic" data-question="How do I cancel my subscription?">Billing & subscriptions ↗</button>
         <button class="topic" data-question="What does the product warranty cover?">Product warranty ↗</button>
       </div>
+      <details class="olist-demo"><summary>Try historical Olist data</summary><p>Public Brazilian marketplace records from 2016–2018. Choose a sample account to see only its historical records. No live tracking or order changes.</p><select id="olist-account" aria-label="Choose a historical demo account"><option value="">Loading demo accounts…</option></select><button id="olist-select" type="button">Start Olist demo chat</button></details>
       <p class="note">When an answer needs a closer look, the assistant can hand your request to the support team.</p>
     </aside>
     <section class="chat" aria-label="Support chat">
-      <div class="chat-header"><div><strong>Let’s sort it out</strong><small>Saved securely · Staff replies appear here</small></div><button class="clear" id="clear">New chat</button></div>
+      <div class="chat-header"><div><strong>Let’s sort it out</strong><small>Saved securely · Staff replies appear here</small></div><div class="header-actions"><button class="clear" id="clear">New chat</button><button class="clear" id="end-session">End session</button></div></div>
       <div class="messages" id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
       <form id="form"><div class="compose"><textarea id="question" aria-label="Your support question" placeholder="How can we help you today?" maxlength="4000" required></textarea><button class="send" id="send" type="submit">Send ↑</button></div><div class="hint">Enter to send · Shift + Enter for a new line · Sensitive identifiers are redacted before storage.</div></form>
     </section>
@@ -56,6 +58,7 @@
   let conversationId = null;
   let retryRequest = null;
   let lastMessageCount = 0;
+  let currentProfile = 'office_store';
   async function api(url, options = {}) {
     const response = await fetch(url, {credentials:'same-origin', ...options});
     const data = await response.json().catch(() => ({}));
@@ -74,7 +77,7 @@
     item.append(label, bubble); messages.append(item); messages.scrollTop = messages.scrollHeight; return item;
   }
   function welcome() { addMessage('assistant', 'Hi! What can I help you with today? Choose a topic on the left, or type your support question below.'); }
-  function setBusy(value) { busy = value; send.disabled = value; input.disabled = value; document.querySelector('#clear').disabled = value; document.querySelectorAll('.topic').forEach(b => b.disabled = value); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
+  function setBusy(value) { busy = value; send.disabled = value || !conversationId; input.disabled = value || !conversationId; document.querySelector('#clear').disabled = value; document.querySelectorAll('.topic').forEach(b => b.disabled = value); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
   function showDetails(item, data) {
     const meta = document.createElement('div'); meta.className = 'metadata';
     const unknown = !data.handoff && data.confidence === 0 && !data.citations?.length;
@@ -114,12 +117,49 @@
   document.querySelectorAll('.topic').forEach(button => button.addEventListener('click', () => { input.value = button.dataset.question; form.requestSubmit(); }));
   async function startNew() {
     const data = await api('/api/conversations', {method:'POST'}); conversationId = data.conversation_id;
-    localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren(); welcome();
+    currentProfile = 'office_store'; localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren(); welcome();
   }
+  async function loadOlistAccounts() {
+    const select = document.querySelector('#olist-account');
+    try {
+      const data = await api('/api/olist/accounts'); select.replaceChildren();
+      if (!data.accounts.length) { select.add(new Option('Olist demo is not initialized yet', '')); return; }
+      select.add(new Option('Choose a sample account', ''));
+      data.accounts.forEach(a => select.add(new Option(a.label, a.alias)));
+    } catch (_) { select.replaceChildren(new Option('Historical demo is unavailable', '')); }
+  }
+  document.querySelector('#olist-select').addEventListener('click', async () => {
+    const alias = document.querySelector('#olist-account').value;
+    if (!alias || busy) return;
+    setBusy(true);
+    try {
+      const created = await api('/api/conversations', {method:'POST'});
+      const selected = await api('/api/conversations/' + created.conversation_id + '/demo-account', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_alias:alias})});
+      conversationId = created.conversation_id; currentProfile = 'olist_demo'; localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren();
+      addMessage('assistant', selected.disclosure + '\n\nSelected sample account: ' + alias + '. Use one of its order references below to ask about the recorded status, payment summary, or review score.');
+      selected.orders.forEach(order => addMessage('assistant', order.reference + ' · ' + order.recorded_status + ' · ' + order.purchase_date));
+      document.querySelector('#business-note').textContent = 'Olist historical data demo · 2016–2018 · Public research dataset';
+    } catch (error) { addMessage('error', error.message); }
+    finally { setBusy(false); }
+  });
   document.querySelector('#clear').addEventListener('click', async () => {
     if (busy) return; setBusy(true);
     try { await startNew(); } catch (error) { addMessage('error', error.message); }
     finally { setBusy(false); input.focus(); }
+  });
+  document.querySelector('#end-session').addEventListener('click', async () => {
+    if (busy) return; setBusy(true);
+    try {
+      await api('/api/session', {method:'DELETE'});
+      localStorage.removeItem('support_conversation');
+      conversationId = null;
+      messages.replaceChildren();
+      welcome();
+      input.disabled = true; send.disabled = true;
+      document.querySelector('#status').dataset.state = 'offline';
+      document.querySelector('#status-text').textContent = 'Session ended · Reload to start again';
+    } catch (error) { addMessage('error', error.message); }
+    finally { setBusy(false); }
   });
   async function refreshHistory(force = false) {
     if (!conversationId || busy) return;
@@ -139,7 +179,8 @@
       const savedId = localStorage.getItem('support_conversation');
       conversationId = session.conversations.find(c => c.id === savedId)?.id || session.conversations[0]?.id;
       if (!conversationId) await startNew();
-      else { setBusy(false); await refreshHistory(true); }
+      else { const selection = await api('/api/conversations/' + conversationId + '/demo-account'); currentProfile = selection.profile; document.querySelector('#business-note').textContent = currentProfile === 'olist_demo' ? 'Olist historical data demo · 2016–2018 · Public research dataset' : session.business_name + (session.business_mode === 'demo' ? ' · Demonstration with fictional policies and orders' : ' · Support grounded in approved documents'); setBusy(false); await refreshHistory(true); }
+      loadOlistAccounts();
       document.querySelector('#status').dataset.state = 'online'; document.querySelector('#status-text').textContent = 'Connected · Chats saved';
     } catch (error) {
       document.querySelector('#status').dataset.state = 'offline'; document.querySelector('#status-text').textContent = 'Service unavailable'; addMessage('error', error.message);

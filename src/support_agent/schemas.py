@@ -129,6 +129,4 @@ class Trace(BaseModel):
 
     def total_usd(self) -> float:
         """Sum the dollar cost across every model call in the run."""
-        return round(
-            sum(s.cost.usd for s in self.spans if s.cost is not None), 6
-        )
+        return round(sum(s.cost.usd for s in self.spans if s.cost is not None), 6)

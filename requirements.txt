@@ -1,5 +1,4 @@
-# Pinned runtime dependencies. `pip install -e .` reads pyproject.toml; this
-# file exists for environments (Docker layers, CI caches) that want a flat list.
+# Runtime dependency list for environments that need a flat requirements file.
 # Keep in sync with pyproject.toml.
 
 anthropic>=0.116

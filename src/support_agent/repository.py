@@ -33,6 +33,19 @@ def token_hash(token: str) -> str:
 
 
 class Repository:
+    def conversation_profile(self, conversation_id: str, owner: str) -> tuple[str, str | None]:
+        with connection() as conn:
+            row = conn.execute(
+                """
+                SELECT c.kb_profile,c.olist_account_alias FROM support_conversations c
+                WHERE c.id=%s AND c.owner_hash=%s
+            """,
+                (conversation_id, owner),
+            ).fetchone()
+        if not row:
+            raise NotFoundError()
+        return row[0], row[1]
+
     def demo_order(self, order_id: str) -> dict | None:
         with connection() as conn:
             row = conn.execute(
@@ -57,6 +70,10 @@ class Repository:
                 ).fetchone()
                 is not None
             )
+
+    def delete_session(self, token: str) -> None:
+        with connection() as conn:
+            conn.execute("DELETE FROM support_sessions WHERE token_hash=%s", (token_hash(token),))
 
     def check_rate(self, principal: str, limit: int | None = None) -> None:
         window = int(time.time()) // 60
@@ -84,7 +101,7 @@ class Repository:
     def conversations(self, owner: str) -> list[dict]:
         with connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
-                "SELECT id,created_at,updated_at FROM support_conversations WHERE owner_hash=%s ORDER BY updated_at DESC LIMIT 50",
+                "SELECT id,created_at,updated_at,kb_profile,olist_account_alias FROM support_conversations WHERE owner_hash=%s ORDER BY updated_at DESC LIMIT 50",
                 (owner,),
             )
             return cur.fetchall()

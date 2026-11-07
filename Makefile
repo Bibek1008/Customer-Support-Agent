@@ -1,12 +1,11 @@
 # Key commands, one line each. Every target reads secrets from the environment
 # (or a local .env loaded by your shell); none are baked into this file.
 
-.PHONY: help install db-up ingest serve eval threshold test lint tau-bench tau2-bench validate-datasets clean
+.PHONY: help install ingest serve eval threshold test lint tau-bench tau2-bench validate-datasets clean
 
 help:
 	@echo "Targets:"
 	@echo "  install    Install the package and dev extras (pip install -e '.[dev,pii]')"
-	@echo "  db-up      Start Postgres+pgvector, the guardrail server, OTel, and Langfuse"
 	@echo "  ingest     Chunk + embed approved KB documents into pgvector"
 	@echo "  serve      Run the FastAPI service (POST /chat, GET /healthz)"
 	@echo "  eval       Run the offline eval over the held-out ticket set"
@@ -20,9 +19,6 @@ help:
 install:
 	pip install -e ".[dev,pii]"
 	python -m spacy download en_core_web_lg
-
-db-up:
-	docker compose up -d
 
 ingest:
 	python -m support_agent.kb.ingest

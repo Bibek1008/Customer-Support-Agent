@@ -71,7 +71,7 @@ def reasoner_kwargs() -> dict[str, Any]:
     """
     settings = get_settings()
     if settings.llm_provider == "groq":
-        return {"model": settings.groq_model, "max_tokens": min(settings.max_output_tokens, 2048)}
+        return {"model": settings.groq_model, "max_tokens": min(settings.max_output_tokens, 1024)}
     return {
         "model": settings.agent_model,
         "max_tokens": settings.max_output_tokens,
@@ -87,7 +87,7 @@ def classifier_kwargs() -> dict[str, Any]:
     """
     settings = get_settings()
     if settings.llm_provider == "groq":
-        return {"model": settings.groq_model, "max_tokens": 2048}
+        return {"model": settings.groq_model, "max_tokens": 512}
     return {
         "model": settings.classifier_model,
         "max_tokens": 512,

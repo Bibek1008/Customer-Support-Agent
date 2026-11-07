@@ -1,0 +1,61 @@
+services:
+  - type: web
+    name: customer-support-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install --require-hashes -r requirements.lock && pip install -e ".[free]"
+    startCommand: uvicorn support_agent.server:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 4 --timeout-keep-alive 5 --no-access-log
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PERSISTENCE_ENABLED
+        value: "1"
+      - key: DATABASE_POOL_SIZE
+        value: "2"
+      - key: INFERENCE_CONCURRENCY
+        value: "1"
+      - key: MAX_OUTPUT_TOKENS
+        value: "1024"
+      - key: BUSINESS_MODE
+        value: demo
+      - key: ALLOW_FIXTURE_ORDERS
+        value: "0"
+      - key: ANSWER_MODE
+        value: generated
+      - key: LLM_PROVIDER
+        value: groq
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: SAFETY_PROVIDER
+        value: groq
+      - key: SAFETY_GROQ_MODEL
+        value: openai/gpt-oss-safeguard-20b
+      - key: EMBEDDING_PROVIDER
+        value: fastembed
+      - key: EMBEDDING_MODEL
+        value: BAAI/bge-small-en-v1.5
+      - key: EMBEDDING_DIM
+        value: "384"
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: GEMINI_FALLBACK_ENABLED
+        value: "0"
+      - key: TRACING_ENABLED
+        value: "1"
+      - key: LANGFUSE_SAMPLE_RATE
+        value: "0.1"
+      - key: LANGFUSE_MONTHLY_TRACE_BUDGET
+        value: "1000"
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_BASE_URL
+        sync: false

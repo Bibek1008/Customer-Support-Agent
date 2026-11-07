@@ -24,7 +24,7 @@ import re
 
 from support_agent.agent.confidence import decide_handoff, score_confidence
 from support_agent.agent.models import get_client, reasoner_kwargs
-from support_agent.agent.prompts import SYSTEM_PROMPT
+from support_agent.agent.prompts import OLIST_SYSTEM_PROMPT, SYSTEM_PROMPT
 from support_agent.config import get_settings
 from support_agent.guardrails import refusal
 from support_agent.guardrails.conversation import (
@@ -54,7 +54,7 @@ from support_agent.schemas import (
     Trace,
 )
 from support_agent.tools import handoff as handoff_tool
-from support_agent.tools.registry import TOOL_SCHEMAS, dispatch
+from support_agent.tools.registry import dispatch, tool_schemas
 
 
 @trace_turn
@@ -66,6 +66,12 @@ def run_turn(
 ) -> Trace:
     """Run one customer turn through the agent and return the full trace."""
     settings = get_settings()
+    from support_agent.request_context import current_request
+
+    request_context = current_request.get()
+    olist_mode = bool(request_context and request_context.kb_profile == "olist_demo")
+    system_prompt = OLIST_SYSTEM_PROMPT if olist_mode else SYSTEM_PROMPT
+    available_tools = tool_schemas()
     trace = Trace(conversation_id=conversation_id)
 
     # 1. Redact PII before anything (model or logs) sees the input.
@@ -181,10 +187,10 @@ def run_turn(
         with model_span(
             kwargs["model"],
             effort=kwargs.get("output_config", {}).get("effort"),
-            input=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+            input=[{"role": "system", "content": system_prompt}, *messages],
         ) as span:
             span.update(
-                metadata={"tools": TOOL_SCHEMAS},
+                metadata={"tools": available_tools},
                 model_parameters={
                     "max_tokens": kwargs["max_tokens"],
                     "reasoning_effort": kwargs.get("output_config", {}).get("effort", "low"),
@@ -192,8 +198,8 @@ def run_turn(
             )
             resp = get_client().messages.create(
                 **kwargs,
-                system=SYSTEM_PROMPT,
-                tools=TOOL_SCHEMAS,
+                system=system_prompt,
+                tools=available_tools,
                 messages=messages,
             )
             cost = cost_from_usage(kwargs["model"], resp.usage)
@@ -275,6 +281,7 @@ def run_turn(
         citations=_dedupe(citations),
         handoff_reason=handoff_reason,
         customer_id=customer_id,
+        extractive=not olist_mode,
     )
     trace.total_cost = None  # per-span costs are the source of truth
     return trace
@@ -310,6 +317,7 @@ def _finalize(
     citations: list[Citation],
     handoff_reason: str | None,
     customer_id: str | None,
+    extractive: bool = True,
 ) -> Decision:
     settings = get_settings()
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
@@ -322,7 +330,7 @@ def _finalize(
         return _unknown(trace, "No supporting sources were retrieved.")
 
     # Score confidence against the sources actually retrieved, then apply tau*.
-    if settings.answer_mode == "extractive":
+    if settings.answer_mode == "extractive" and extractive:
         safe_sources = [
             source
             for source in citations

@@ -82,9 +82,33 @@ class PIIRedactor:
     def _try_load_presidio(self) -> bool:
         try:
             from presidio_analyzer import AnalyzerEngine
+            from presidio_analyzer.nlp_engine import NoOpNlpEngine
+            from presidio_analyzer.predefined_recognizers import (
+                CreditCardRecognizer,
+                EmailRecognizer,
+                IpRecognizer,
+                PhoneRecognizer,
+                UsSsnRecognizer,
+            )
+            from presidio_analyzer.recognizer_registry import RecognizerRegistry
             from presidio_anonymizer import AnonymizerEngine
 
-            self._analyzer = AnalyzerEngine()
+            # Pattern recognizers do not need a language model. The old default
+            # AnalyzerEngine silently loaded en_core_web_lg, which is too large
+            # for a small free web instance and adds no value to these entities.
+            registry = RecognizerRegistry(supported_languages=["en"])
+            for recognizer in (
+                EmailRecognizer(),
+                CreditCardRecognizer(),
+                IpRecognizer(),
+                PhoneRecognizer(),
+                UsSsnRecognizer(),
+            ):
+                registry.add_recognizer(recognizer)
+            engine = NoOpNlpEngine(models=[{"lang_code": "en", "model_name": "no-op"}])
+            self._analyzer = AnalyzerEngine(
+                registry=registry, nlp_engine=engine, supported_languages=["en"]
+            )
             self._anonymizer = AnonymizerEngine()
             return True
         except Exception as exc:  # noqa: BLE001 - detector setup must fall back safely

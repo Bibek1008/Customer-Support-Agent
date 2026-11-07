@@ -36,3 +36,11 @@ figures/*.png
 .DS_Store
 .idea/
 .vscode/
+
+# Historical dataset payloads and generated reports
+/data/raw/
+/data/reports/
+/data/staging/
+/model-cache/
+/kaggle.json
+*.log

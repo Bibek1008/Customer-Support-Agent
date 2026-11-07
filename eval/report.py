@@ -29,7 +29,7 @@ _REPRODUCE = {
 }
 
 
-def write_report(summary: "EvalSummary") -> None:
+def write_report(summary: EvalSummary) -> None:
     _JSON.write_text(json.dumps(asdict(summary), indent=2))
     _MD.write_text(_render_markdown(summary))
     _maybe_write_figure(summary)
@@ -41,51 +41,56 @@ def _cell(value: float | None, key: str, fmt: str = ".1%") -> str:
     return format(value, fmt)
 
 
-def _render_markdown(summary: "EvalSummary") -> str:
+def _render_markdown(summary: EvalSummary) -> str:
     lines = [
         "# Eval report: production support agent",
         "",
-        f"Held-out tickets: **{summary.n_tickets}**. Checks run: "
-        f"{', '.join(summary.checks)}.",
+        f"Held-out tickets: **{summary.n_tickets}**. Checks run: {', '.join(summary.checks)}.",
         "",
-        "Every value below was measured on this run. Rows shown as a `run:` "
-        "command were not part of this run; execute the command to measure them.",
+        (
+            "Every value below was measured on this run. Rows shown as a `run:` "
+            "command were not part of this run; execute the command to measure them."
+        ),
         "",
         "| Metric | Value |",
         "|---|---|",
         f"| Handoff rate | {summary.handoff_rate:.1%} |",
         f"| Resolution rate | {_cell(summary.resolution_rate, 'resolution_rate')} |",
         f"| Accuracy | {_cell(summary.accuracy, 'accuracy')} |",
-        f"| Hallucination rate (per response) | "
-        f"{_cell(summary.hallucination_response_rate, 'hallucination_response_rate')} |",
-        f"| Hallucination rate (per claim) | "
-        f"{_cell(summary.hallucination_claim_rate, 'hallucination_response_rate')} |",
+        (
+            f"| Hallucination rate (per response) | "
+            f"{_cell(summary.hallucination_response_rate, 'hallucination_response_rate')} |"
+        ),
+        (
+            f"| Hallucination rate (per claim) | "
+            f"{_cell(summary.hallucination_claim_rate, 'hallucination_response_rate')} |"
+        ),
         f"| Tone pass rate | {_cell(summary.tone_pass_rate, 'tone_pass_rate')} |",
         f"| Handoff threshold tau* | run: `{_REPRODUCE['tau_star']}` |",
         "",
         "## Reference points (cited; other systems, not this agent)",
         "",
-        "- tau-bench GPT-4o: pass^1 under 50%, pass^8 under 25% in retail "
-        "(arXiv 2406.12045).",
-        "- AgentDojo GPT-4o: 69% benign utility, 45% under attack "
-        "(OpenReview m1YYAQjO3w).",
+        "- tau-bench GPT-4o: pass^1 under 50%, pass^8 under 25% in retail (arXiv 2406.12045).",
+        "- AgentDojo GPT-4o: 69% benign utility, 45% under attack (OpenReview m1YYAQjO3w).",
         "- tau-bench airline leaderboard ceiling near 0.70 (verify live).",
         "",
-        "These frame the problem; the headline for this agent is the resolution "
-        "rate and hallucination rate above, plus the tau* that holds hallucination "
-        "under target.",
+        (
+            "These frame the problem; the headline for this agent is the resolution "
+            "rate and hallucination rate above, plus the tau* that holds hallucination "
+            "under target."
+        ),
     ]
     return "\n".join(lines) + "\n"
 
 
-def _maybe_write_figure(summary: "EvalSummary") -> None:
+def _maybe_write_figure(summary: EvalSummary) -> None:
     """Draw a small bar of the measured rates, if matplotlib is available."""
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-    except Exception:
+    except ImportError:
         return
 
     metrics = {

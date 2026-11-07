@@ -8,6 +8,7 @@ import hmac
 import logging
 import re
 import secrets
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from support_agent.config import get_settings
-from support_agent.db import DatabaseSchemaError, check_database, migrate
+from support_agent.db import DatabaseSchemaError, check_database, get_pool, migrate
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.audit import capture_events
 from support_agent.repository import (
@@ -43,6 +44,9 @@ from support_agent.schemas import DecisionType, Message, TicketStatus
 LOGGER = logging.getLogger(__name__)
 WEB = Path(__file__).resolve().parents[2] / "website"
 COOKIE = "support_session"
+_STAFF_AUTH_FAILURES: dict[str, tuple[int, int]] = {}
+_STAFF_AUTH_FAILURES_LOCK = threading.Lock()
+_STAFF_AUTH_FAILURE_LIMIT = 10
 router = APIRouter()
 
 
@@ -58,18 +62,12 @@ def startup():
             migrate()
         check_database()
     if settings.app_env == "production":
-        from support_agent.guardrails.safety import SafetyRole, get_classifier
         from support_agent.kb.store import get_store
 
         if not get_redactor()._presidio:
             raise RuntimeError("Production requires a functioning Presidio installation.")
         if not get_store()._use_db or not get_store().count():
             raise RuntimeError("Production requires an ingested PostgreSQL knowledge base.")
-        verdict = get_classifier().classify("Hello", SafetyRole.USER)
-        if not verdict.checked or any(
-            c in verdict.categories for c in ("UNAVAILABLE", "INVALID_VERDICT")
-        ):
-            raise RuntimeError("Production safety classifier is unavailable.")
 
 
 def browser_page(name):
@@ -146,9 +144,27 @@ def require_admin(request: Request):
     if not key or not hmac.compare_digest(
         request.headers.get("authorization", ""), "Bearer " + key
     ):
+        host = request.client.host if request.client else "unknown"
+        principal = token_hash(host)
+        window = int(time.time()) // 60
+        with _STAFF_AUTH_FAILURES_LOCK:
+            if len(_STAFF_AUTH_FAILURES) > 10_000:
+                _STAFF_AUTH_FAILURES.clear()
+            previous = _STAFF_AUTH_FAILURES.get(principal)
+            count = previous[1] + 1 if previous and previous[0] == window else 1
+            _STAFF_AUTH_FAILURES[principal] = (window, count)
+        if count > _STAFF_AUTH_FAILURE_LIMIT:
+            raise HTTPException(
+                429,
+                "Too many unsuccessful staff authentication attempts. Try again next minute.",
+                headers={"Retry-After": "60"},
+            )
         raise HTTPException(
             401, "Staff authentication required.", headers={"WWW-Authenticate": "Bearer"}
         )
+    host = request.client.host if request.client else "unknown"
+    with _STAFF_AUTH_FAILURES_LOCK:
+        _STAFF_AUTH_FAILURES.pop(token_hash(host), None)
     require_persistence()
     get_repository().check_rate("staff:" + token_hash(key), limit=120)
 
@@ -184,10 +200,74 @@ def session(request: Request, response: Response):
     }
 
 
+@router.delete("/api/session", status_code=204)
+def end_session(request: Request, response: Response):
+    require_persistence()
+    check_ingress_rate(request)
+    token = request.cookies.get(COOKIE)
+    if token and len(token) <= 100:
+        get_repository().delete_session(token)
+    response.delete_cookie(
+        COOKIE,
+        path="/",
+        httponly=True,
+        secure=get_settings().app_env == "production",
+        samesite="strict",
+    )
+
+
 @router.post("/api/conversations")
 def new_conversation(owner: str = Depends(require_owner)):
     get_repository().check_rate(owner)
     return {"conversation_id": get_repository().create_conversation(owner)}
+
+
+@router.get("/api/olist/accounts")
+def olist_accounts(owner: str = Depends(require_owner)):
+    from support_agent.olist.queries import public_accounts
+
+    return {
+        "accounts": public_accounts(),
+        "disclosure": "Curated demo identities over historical public data. This is not live customer information.",
+    }
+
+
+class DemoAccountSelection(BaseModel):
+    account_alias: str = Field(pattern=r"^demo-customer-[0-9]{2}$")
+
+
+@router.put("/api/conversations/{conversation_id}/demo-account")
+def select_olist_account(
+    conversation_id: UUID, body: DemoAccountSelection, owner: str = Depends(require_owner)
+):
+    from support_agent.olist.queries import bind_account
+
+    if not bind_account(str(conversation_id), owner, body.account_alias):
+        raise HTTPException(409, "Start a new chat and choose a valid demo account.")
+    from support_agent.olist.queries import account_orders
+
+    return {
+        "profile": "olist_demo",
+        "account": body.account_alias,
+        "orders": account_orders(str(conversation_id), owner),
+        "disclosure": "Olist Brazilian E-Commerce Public Dataset, historical records; no live tracking or order actions.",
+    }
+
+
+@router.get("/api/conversations/{conversation_id}/demo-account")
+def current_demo_account(conversation_id: UUID, owner: str = Depends(require_owner)):
+    from support_agent.olist.queries import current_selection
+
+    return current_selection(str(conversation_id), owner)
+
+
+@router.delete("/api/conversations/{conversation_id}/demo-account")
+def reset_olist_profile(conversation_id: UUID, owner: str = Depends(require_owner)):
+    from support_agent.olist.queries import reset_profile
+
+    if not reset_profile(str(conversation_id), owner):
+        raise NotFoundError()
+    return {"profile": "office_store"}
 
 
 @router.get("/api/conversations/{conversation_id}")
@@ -222,6 +302,9 @@ def durable_chat(req, request, run_turn):
         raise HTTPException(422, "Request ID must be a UUID.") from error
     lease_token = str(uuid4())
     fingerprint = hashlib.sha256((req.conversation_id + "\0" + req.message).encode()).hexdigest()
+    profile, account_alias = repo.conversation_profile(req.conversation_id, owner)
+    if profile == "olist_demo" and not account_alias:
+        raise HTTPException(409, "Select a demo account before using Olist support.")
     cached = repo.begin_turn(
         req.conversation_id,
         owner,
@@ -233,7 +316,14 @@ def durable_chat(req, request, run_turn):
     if cached is not None:
         return cached
     context = current_request.set(
-        RequestContext(req.conversation_id, request_id, owner, time.monotonic() + 180)
+        RequestContext(
+            req.conversation_id,
+            request_id,
+            owner,
+            time.monotonic() + 180,
+            kb_profile=profile,
+            olist_account=account_alias,
+        )
     )
     try:
         history = [
@@ -329,6 +419,24 @@ def activity():
     return jsonable_encoder(get_repository().recent_turns())
 
 
+@router.get("/api/admin/tracing-budget", dependencies=[Depends(require_admin)])
+def tracing_budget():
+    from datetime import UTC, datetime
+
+    month = datetime.now(UTC).strftime("%Y-%m")
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            "SELECT trace_count FROM support_trace_budget WHERE month=%s", (month,)
+        ).fetchone()
+    return {
+        "month": month,
+        "sampled_trace_count": row[0] if row else 0,
+        "application_trace_cap": get_settings().langfuse_monthly_trace_budget,
+        "sample_rate": get_settings().langfuse_sample_rate,
+        "note": "Application-side trace cap; monitor actual Langfuse monthly units in its dashboard.",
+    }
+
+
 def install(app):
     from support_agent.guardrails.safety import SafetyUnavailableError
 
@@ -342,6 +450,7 @@ def install(app):
 
     @app.middleware("http")
     async def security_headers(request, call_next):
+        started = time.perf_counter()
         origin = request.headers.get("origin")
         if request.method in {"POST", "PATCH", "PUT", "DELETE"}:
             if origin and origin.rstrip("/") != get_settings().app_origin.rstrip("/"):
@@ -350,7 +459,29 @@ def install(app):
                 return JSONResponse(
                     status_code=403, content={"detail": "Cross-site request is not allowed."}
                 )
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as error:
+            route = getattr(request.scope.get("route"), "path", "unmatched")
+            LOGGER.error(
+                "request failed method=%s route=%s error=%s duration_ms=%.1f",
+                request.method,
+                route,
+                type(error).__name__,
+                (time.perf_counter() - started) * 1000,
+            )
+            raise
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        request_id = str(uuid4())
+        response.headers["X-Request-ID"] = request_id
+        LOGGER.info(
+            "request completed id=%s method=%s route=%s status=%s duration_ms=%.1f",
+            request_id,
+            request.method,
+            route,
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+        )
         response.headers.update(
             {
                 "X-Content-Type-Options": "nosniff",

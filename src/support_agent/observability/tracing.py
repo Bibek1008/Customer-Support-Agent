@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import random
+import threading
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
+from datetime import UTC, datetime
 from functools import lru_cache, wraps
 from inspect import signature
 
@@ -14,6 +18,50 @@ from support_agent.schemas import CostRecord
 
 _root: ContextVar[_Span | None] = ContextVar("support_trace_root", default=None)
 _pii_summary: ContextVar[dict | None] = ContextVar("support_pii_summary", default=None)
+_trace_selected: ContextVar[bool] = ContextVar("support_trace_selected", default=False)
+_budget_lock = threading.Lock()
+_local_budget: dict[str, int] = {}
+
+
+def _reserve_trace() -> bool:
+    settings = get_settings()
+    if not settings.tracing_enabled or settings.langfuse_monthly_trace_budget == 0:
+        return False
+    if not (
+        all(
+            (settings.langfuse_public_key, settings.langfuse_secret_key, settings.langfuse_base_url)
+        )
+        or settings.otel_endpoint
+    ):
+        return False
+    if random.random() >= settings.langfuse_sample_rate:
+        return False
+    month = datetime.now(UTC).strftime("%Y-%m")
+    if not settings.persistence_enabled:
+        with _budget_lock:
+            count = _local_budget.get(month, 0)
+            if count >= settings.langfuse_monthly_trace_budget:
+                return False
+            _local_budget[month] = count + 1
+            return True
+    try:
+        from support_agent.db import connection
+
+        with connection() as conn:
+            row = conn.execute(
+                """
+                INSERT INTO support_trace_budget(month,trace_count) VALUES(%s,1)
+                ON CONFLICT(month) DO UPDATE SET trace_count=support_trace_budget.trace_count+1
+                WHERE support_trace_budget.trace_count < %s RETURNING trace_count
+            """,
+                (month, settings.langfuse_monthly_trace_budget),
+            ).fetchone()
+        return row is not None
+    except Exception as error:  # noqa: BLE001 - telemetry must not block support
+        logging.getLogger(__name__).warning(
+            "Trace sampling budget unavailable (%s)", type(error).__name__
+        )
+        return False
 
 
 def chat_messages(messages):
@@ -140,6 +188,7 @@ def get_langfuse():
         environment=s.langfuse_environment,
         release=__version__,
         mask_otel_spans=mask_otel_spans,
+        sample_rate=1.0,
         tracer_provider=TracerProvider(
             resource=Resource.create({"service.name": s.otel_service_name})
         ),
@@ -166,23 +215,51 @@ def _generic_tracer():
 
 @contextmanager
 def _span(name: str, kind: str = "span", **kwargs):
-    if not get_settings().tracing_enabled:
+    if not get_settings().tracing_enabled or not _trace_selected.get():
         yield _Span()
         return
-    client = get_langfuse()
+    try:
+        client = get_langfuse()
+    except Exception as error:  # noqa: BLE001 - telemetry initialization must be optional
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Langfuse initialization failed (%s)", type(error).__name__
+        )
+        client = None
     error = None
     if client is not None:
         # Re-raise AFTER SDK context exit: automatic exception events can carry
         # raw source text, and the export masking hook cannot modify events.
-        with client.start_as_current_observation(
-            name=name, as_type=kind, **sanitize(kwargs)
-        ) as obs:
+        try:
+            manager = client.start_as_current_observation(
+                name=name, as_type=kind, **sanitize(kwargs)
+            )
+            obs = manager.__enter__()
+        except Exception as setup_error:  # noqa: BLE001 - continue with a local no-op span
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Langfuse span setup failed (%s)", type(setup_error).__name__
+            )
+            yield _Span()
+            return
+        try:
             wrapped = _Span(observation=obs)
             try:
                 yield wrapped
             except Exception as exc:  # noqa: BLE001 - re-raised below without exporting raw exception text
                 wrapped.update(level="ERROR", status_message=type(exc).__name__)
                 error = (exc, exc.__traceback__)
+        finally:
+            try:
+                manager.__exit__(None, None, None)
+            except Exception as export_error:  # noqa: BLE001 - telemetry export is best effort
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Langfuse span export failed (%s)", type(export_error).__name__
+                )
     else:
         with (
             _generic_tracer()
@@ -209,7 +286,19 @@ def trace_turn(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
         params = signature(function).bind(*args, **kwargs).arguments
-        client = get_langfuse() if get_settings().tracing_enabled else None
+        selected = _reserve_trace()
+        selected_token = _trace_selected.set(selected)
+        try:
+            client = get_langfuse() if selected else None
+        except Exception as error:  # noqa: BLE001 - telemetry never blocks a support turn
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Langfuse initialization failed (%s)", type(error).__name__
+            )
+            client = None
+            selected = False
+            _trace_selected.set(False)
         context = nullcontext()
         if client is not None:
             from langfuse import propagate_attributes
@@ -231,32 +320,40 @@ def trace_turn(function):
                     **({"request_id": request_context.request_id} if request_context else {}),
                 },
             )
-        with context, _span("handle-support-request", "agent") as span:
-            token = _root.set(span)
-            summary = {"checks": 0, "entities": set()}
-            pii_token = _pii_summary.set(summary)
-            try:
-                result = function(*args, **kwargs)
-                if client is not None:
-                    result.langfuse_trace_id = client.get_current_trace_id()
-                if result.decision is not None:
-                    d = result.decision
-                    span.update(
-                        output=d.answer,
-                        metadata={
-                            "decision": d.type.value,
-                            "confidence": d.confidence,
-                            "threshold": d.threshold,
-                            "handoff_reason": d.handoff_reason,
-                            "source_ids": [c.source_id for c in d.citations],
-                            "pii_checks": summary["checks"],
-                            "pii_entity_types": sorted(summary["entities"]),
-                        },
-                    )
-                return result
-            finally:
-                _pii_summary.reset(pii_token)
-                _root.reset(token)
+        try:
+            with context, _span("handle-support-request", "agent") as span:
+                token = _root.set(span)
+                summary = {"checks": 0, "entities": set()}
+                pii_token = _pii_summary.set(summary)
+                try:
+                    result = function(*args, **kwargs)
+                    if client is not None:
+                        try:
+                            result.langfuse_trace_id = client.get_current_trace_id()
+                        except Exception as error:  # noqa: BLE001 - tracing is optional
+                            logging.getLogger(__name__).warning(
+                                "Trace ID unavailable (%s)", type(error).__name__
+                            )
+                    if result.decision is not None:
+                        d = result.decision
+                        span.update(
+                            output=d.answer,
+                            metadata={
+                                "decision": d.type.value,
+                                "confidence": d.confidence,
+                                "threshold": d.threshold,
+                                "handoff_reason": d.handoff_reason,
+                                "source_ids": [c.source_id for c in d.citations],
+                                "pii_checks": summary["checks"],
+                                "pii_entity_types": sorted(summary["entities"]),
+                            },
+                        )
+                    return result
+                finally:
+                    _pii_summary.reset(pii_token)
+                    _root.reset(token)
+        finally:
+            _trace_selected.reset(selected_token)
 
     return wrapped
 
@@ -335,16 +432,21 @@ class _Span:
     def update(self, **kwargs):
         if kwargs.get("metadata"):
             self._metadata.update(kwargs["metadata"])
-        if self._observation is not None:
-            self._observation.update(**sanitize(kwargs))
-        elif self._span is not None:
-            for key, value in kwargs.items():
-                self.set(
-                    "langfuse.observation.model.name"
-                    if key == "model"
-                    else f"langfuse.observation.{key}",
-                    value,
-                )
+        try:
+            if self._observation is not None:
+                self._observation.update(**sanitize(kwargs))
+            elif self._span is not None:
+                for key, value in kwargs.items():
+                    self.set(
+                        "langfuse.observation.model.name"
+                        if key == "model"
+                        else f"langfuse.observation.{key}",
+                        value,
+                    )
+        except Exception as error:  # noqa: BLE001 - observability failures are non-fatal
+            import logging
+
+            logging.getLogger(__name__).warning("Trace update failed (%s)", type(error).__name__)
 
     def set(self, key: str, value):
         self._metadata[key] = value
@@ -408,11 +510,21 @@ class _Span:
 
 def flush_tracing():
     if get_settings().tracing_enabled and (client := get_langfuse()) is not None:
-        client.flush()
+        try:
+            client.flush()
+        except Exception as error:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning("Trace flush failed (%s)", type(error).__name__)
 
 
 def shutdown_tracing():
     if get_langfuse.cache_info().currsize and (client := get_langfuse()) is not None:
-        client.shutdown()
+        try:
+            client.shutdown()
+        except Exception as error:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).warning("Trace shutdown failed (%s)", type(error).__name__)
     if _generic_tracer.cache_info().currsize:
         _generic_tracer().shutdown()

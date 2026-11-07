@@ -7,6 +7,11 @@ Provider switching is an explicit, quota-only wrapper in ``fallback.py``.
 from __future__ import annotations
 
 import json
+import random
+import threading
+import time
+from contextlib import contextmanager
+from functools import lru_cache
 from types import SimpleNamespace
 
 import httpx
@@ -14,12 +19,32 @@ import httpx
 from support_agent.request_context import remaining_timeout
 
 
+@lru_cache(maxsize=1)
+def _inference_slots():
+    from support_agent.config import get_settings
+
+    return threading.BoundedSemaphore(get_settings().inference_concurrency)
+
+
+@contextmanager
+def inference_slot():
+    """Share one bounded provider-call budget across generation and safety."""
+    slots = _inference_slots()
+    if not slots.acquire(timeout=remaining_timeout()):
+        raise httpx.PoolTimeout("Inference capacity is temporarily full.")
+    try:
+        yield
+    finally:
+        slots.release()
+
+
 class GroqRequestError(RuntimeError):
     """A provider failure with a safe message, never the raw response body."""
 
-    def __init__(self, message: str, status_code: int):
+    def __init__(self, message: str, status_code: int, retry_after: str | None = None):
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after = retry_after
 
 
 class GroqOutputError(GroqRequestError):
@@ -116,12 +141,13 @@ class GroqClient:
                 },
             }
         for attempt in range(2):
-            response = httpx.post(
-                self.endpoint,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                json=payload,
-                timeout=remaining_timeout(),
-            )
+            with inference_slot():
+                response = httpx.post(
+                    self.endpoint,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=payload,
+                    timeout=remaining_timeout(),
+                )
             # Groq can intermittently fail to parse even strict structured output.
             # Retry only generation failures, once, with the same provider/schema.
             code = None
@@ -132,13 +158,20 @@ class GroqClient:
                     code = error.get("code") if isinstance(error, dict) else None
                 except ValueError:
                     pass
+            if response.status_code in {502, 503, 504} and attempt == 0:
+                delay = min(0.5, 0.2 * (2**attempt) + random.uniform(0, 0.1))
+                time.sleep(min(delay, remaining_timeout()))
+                continue
             if code not in {"output_parse_failed", "json_validate_failed", "tool_use_failed"}:
                 break
             if attempt == 1:
                 raise GroqOutputError("Groq could not generate a valid response.", 502)
+            time.sleep(min(0.15 + random.uniform(0, 0.05), remaining_timeout()))
         if response.status_code == 429:
             raise GroqRequestError(
-                f"{self.provider.title()} usage limit reached. Please retry later.", 429
+                f"{self.provider.title()} usage limit reached. Please retry later.",
+                429,
+                response.headers.get("retry-after"),
             )
         if response.is_error:
             # Do not expose provider error bodies: they can include customer input.

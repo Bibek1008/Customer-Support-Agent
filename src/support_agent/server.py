@@ -50,15 +50,18 @@ app = FastAPI(
 @app.exception_handler(GroqRequestError)
 async def provider_error_handler(request, error: GroqRequestError) -> JSONResponse:
     if error.status_code == 429:
+        retry_after = error.retry_after or "60"
+        if not retry_after.isdigit():
+            retry_after = "60"
         return JSONResponse(
             status_code=429,
-            headers={"Retry-After": "60"},
+            headers={"Retry-After": retry_after},
             content={
                 "detail": "The assistant has reached its usage limit. Please try again later."
             },
         )
     return JSONResponse(
-        status_code=502,
+        status_code=503 if error.status_code == 503 else 502,
         content={"detail": "The assistant could not complete its response. Please try again."},
     )
 

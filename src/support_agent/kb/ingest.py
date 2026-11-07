@@ -59,11 +59,14 @@ def ingest_directory(
     docs_dir: str,
     chunk_size: int | None = None,
     overlap: int | None = None,
+    profile: str = "office_store",
 ) -> int:
     """Ingest every Markdown/text file under ``docs_dir`` and return chunks processed."""
     store = get_store()
     embedder = get_embedder()
     settings = store.settings
+    if profile not in {"office_store", "olist_demo"}:
+        raise ValueError("KB profile must be office_store or olist_demo.")
     chunk_size = chunk_size if chunk_size is not None else settings.kb_chunk_size
     overlap = overlap if overlap is not None else settings.kb_chunk_overlap
     if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
@@ -95,6 +98,7 @@ def ingest_directory(
                     url=url,
                     text=piece,
                     metadata=metadata,
+                    profile=profile,
                 )
             )
 
@@ -115,18 +119,20 @@ def main() -> None:
         "--chunk-overlap", type=int, default=None, help="Chunk overlap in characters"
     )
     parser.add_argument("--reset", action="store_true", help="Clear existing chunks first")
+    parser.add_argument("--profile", choices=("office_store", "olist_demo"), default="office_store")
     args = parser.parse_args()
 
     settings = get_store().settings
     docs_dir = args.docs or settings.kb_docs_path
     store = get_store()
     if args.reset:
-        store.clear()
+        store.clear(profile=args.profile)
 
     written = ingest_directory(
         docs_dir,
         chunk_size=args.chunk_size,
         overlap=args.chunk_overlap,
+        profile=args.profile,
     )
     print(f"Ingested {written} chunks from {docs_dir} (store now holds {store.count()}).")
 

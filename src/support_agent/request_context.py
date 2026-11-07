@@ -11,6 +11,8 @@ class RequestContext:
     request_id: str
     owner_hash: str
     deadline: float = 0.0
+    kb_profile: str = "office_store"
+    olist_account: str | None = None
 
 
 current_request: ContextVar[RequestContext | None] = ContextVar("support_request", default=None)

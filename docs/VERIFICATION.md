@@ -117,10 +117,10 @@ not establish production quality or a calibrated confidence threshold.
 
 ## Remaining deployment checks
 
-Docker configuration and CI build checks are prepared. Docker is not installed
-on this workstation, so the image build, container startup, public TLS, and a
-backup restoration drill have not been verified. Complete those steps on the
-deployment host using `docs/PRODUCTION.md` before serving real customers.
+The deployment target is Render's native Python runtime. Current deployment
+checks and outstanding staging requirements are tracked in
+`docs/FINAL_RELEASE_READINESS.md`; a local verification pass is not proof of
+Render runtime capacity, live provider behavior, or a production deployment.
 
 The current safety-provider quota supports a paced demonstration. Public
 concurrent traffic needs adequate provider capacity. Guest sessions and demo
