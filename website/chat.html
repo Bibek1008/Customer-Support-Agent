@@ -77,7 +77,8 @@
   function setBusy(value) { busy = value; send.disabled = value; input.disabled = value; document.querySelector('#clear').disabled = value; document.querySelectorAll('.topic').forEach(b => b.disabled = value); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
   function showDetails(item, data) {
     const meta = document.createElement('div'); meta.className = 'metadata';
-    const badge = document.createElement('span'); badge.className = 'badge' + (data.handoff ? ' handoff' : ''); badge.textContent = data.handoff ? (data.ticket_id ? 'Saved for support review' : 'Request declined') : 'Answered'; meta.append(badge);
+    const unknown = !data.handoff && data.confidence === 0 && !data.citations?.length;
+    const badge = document.createElement('span'); badge.className = 'badge' + (data.handoff || unknown ? ' handoff' : ''); badge.textContent = data.handoff ? (data.ticket_id ? 'Saved for support review' : 'Request declined') : (unknown ? 'Information unavailable' : 'Answered'); meta.append(badge);
     if (data.ticket_id) { const ticket = document.createElement('span'); ticket.className = 'badge handoff'; ticket.textContent = 'Ticket ' + data.ticket_id; meta.append(ticket); }
     item.append(meta);
     if (data.citations?.length) {

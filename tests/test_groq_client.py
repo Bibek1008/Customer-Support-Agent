@@ -156,11 +156,21 @@ def test_transient_output_parse_failure_retries_same_provider(monkeypatch):
     assert calls[1][1]["response_format"]["json_schema"]["strict"] is True
 
 
-def test_confidence_parse_failure_returns_handoff_instead_of_500(monkeypatch):
+def test_confidence_parse_failure_acknowledges_unknown_instead_of_500(monkeypatch):
     from fastapi.testclient import TestClient
 
     from support_agent.agent import models
+    from support_agent.schemas import Citation
     from support_agent.server import app
+    from support_agent.tools.registry import ToolOutcome
+
+    citation = Citation(
+        source_id="returns", source_title="Returns", chunk="Return within 30 days.", score=0.9
+    )
+    monkeypatch.setattr(
+        "support_agent.agent.loop.dispatch",
+        lambda *_: ToolOutcome(text=citation.chunk, citations=[citation]),
+    )
 
     monkeypatch.setenv("SAFETY_MODEL_URL", "")
     monkeypatch.setenv("LLM_PROVIDER", "groq")
@@ -173,7 +183,24 @@ def test_confidence_parse_failure_returns_handoff_instead_of_500(monkeypatch):
     def post(url, **kwargs):
         calls.append(url)
         if len(calls) == 1:
-            return _response({"content": "Hi! How can I help you today?"})
+            return _response(
+                {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "lookup",
+                            "type": "function",
+                            "function": {
+                                "name": "knowledge_base",
+                                "arguments": '{"query":"return policy"}',
+                            },
+                        }
+                    ],
+                },
+                "tool_calls",
+            )
+        if len(calls) == 2:
+            return _response({"content": "Return within 30 days."})
         return httpx.Response(
             400,
             json={
@@ -191,11 +218,12 @@ def test_confidence_parse_failure_returns_handoff_instead_of_500(monkeypatch):
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["handoff"] is True
+    assert data["handoff"] is False
     assert data["confidence"] == 0
-    assert data["ticket_id"]
+    assert data["ticket_id"] is None
+    assert "I don't know" in data["answer"]
     assert "private failed generation" not in response.text
-    assert len(calls) == 3  # One draft, two attempts to score it; no unbounded retry.
+    assert len(calls) == 4  # Retrieval, draft, two scoring attempts; no unbounded retry.
 
 
 @pytest.mark.parametrize(

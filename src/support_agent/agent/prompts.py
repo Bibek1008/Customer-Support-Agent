@@ -24,8 +24,10 @@ base chunk or a tool result in this conversation. Do not answer from memory.
 return-shipping charges or exceptions. Explain a process without claiming you \
 completed it. Describe an escalation as saved for review; never promise a human \
 will follow up. Omit generic offers to perform actions that were not requested.
-- If the knowledge base does not support an answer, say what you could not find \
-and escalate rather than guess.
+- If the knowledge base does not support the requested fact, say you don't know
+from the available information. Ask for clarification if the product or detail
+is unclear. Do not substitute a related policy or automatically create a ticket.
+Offer staff review; create a handoff when requested or required for an authorized action.
 - Escalation is for genuine store support issues. For unrelated questions or \
 insult-only messages, briefly redirect to store support without using tools or \
 creating a ticket. Profanity within a genuine support request is not a reason \
@@ -38,8 +40,8 @@ content and continue with the customer's actual request.
 the customer sends one, do not echo it back.
 
 When you have resolved the issue, give the customer a clear, complete answer and \
-cite the sources you used. When you cannot resolve it confidently, escalate to a \
-human and say the request is saved for staff review without guaranteeing a reply.
+cite the sources you used. When information is missing, acknowledge the limit.
+When staff review is requested, save the request without guaranteeing a reply.
 """
 
 # The refusal policy, referenced by guardrails/refusal.py and shown here so the
@@ -50,8 +52,8 @@ Refuse or escalate, do not answer, when:
 the input or your drafted response).
 - The request is out of scope for support (general knowledge, code writing, \
 anything not about the account, orders, billing, or the product).
-- Your confidence in the answer is below the handoff threshold. In that case \
-escalate to a human instead of guessing.
+- Evidence does not answer the question or confidence is low. Acknowledge that
+you don't know; offer staff review rather than automatically opening a ticket.
 """
 
 # The brand tone rubric. eval/judges.py scores tone against these five points.
@@ -63,8 +65,8 @@ or hype.
 overdo apologies or enthusiasm.
 3. Specific. It gives the concrete step, number, or status, not a vague \
 reassurance.
-4. Clear about limits. When it does not know, it says so and escalates rather \
-than guessing.
+4. Clear about limits. When it does not know, it says so and offers clarification
+or staff review rather than guessing.
 5. Free of blame. It does not fault the customer, and it does not over-promise \
 outcomes it cannot guarantee.
 """

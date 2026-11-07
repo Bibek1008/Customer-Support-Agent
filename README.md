@@ -6,7 +6,11 @@ an authenticated staff inbox, hosted safety checks, guardrail activity, and stor
 evaluation reports. Start with [deployment and operations](docs/PRODUCTION.md).
 The configured demo uses Groq GPT-OSS 20B, Gemini embeddings, PostgreSQL/pgvector,
 Groq GPT-OSS Safeguard, and Langfuse. Factual answers quote source excerpts by
-default. The older setup sections below describe optional development alternatives.
+default, after model-based question-relevance and evidence checks. Vague requests
+ask for clarification; missing knowledge produces an honest "I don't know"
+without automatically opening a ticket. Staff review remains available on request.
+The older setup sections below describe the original tutorial and optional
+development alternatives; current behavior is documented in `docs/PRODUCTION.md`.
 
 ```powershell
 .venv/Scripts/python.exe -m support_agent.db

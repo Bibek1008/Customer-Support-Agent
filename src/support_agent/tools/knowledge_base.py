@@ -50,7 +50,8 @@ def search_knowledge_base(query: str, k: int = 4) -> KBResult:
     if not citations:
         text = (
             "No knowledge base article matched this query closely enough to cite. "
-            "Do not answer from memory; escalate if the customer needs this."
+            "Do not answer from memory. Say you don't know from the available information; "
+            "ask for details or offer staff review without automatically opening a ticket."
         )
     else:
         text = "Retrieved knowledge base chunks:\n\n" + "\n\n".join(lines)

@@ -7,8 +7,8 @@ One run handles one customer turn end to end:
    through the injection quarantine before the model reads it, and the cost of
    every model call is recorded on a span.
 3. When the model produces an answer, score its confidence against the sources
-   it retrieved and decide handoff against tau*. Below tau*, or if the model
-   itself escalated, open a human ticket instead of answering.
+   it retrieved and check that the evidence answers the question. Missing or
+   irrelevant evidence produces an honest unknown answer, without a ticket.
 4. Gate the final answer with the safety classifier before returning it.
 
 We use a manual loop rather than the SDK tool runner because two things have to
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 
-from support_agent.agent.confidence import ConfidenceResult, decide_handoff, score_confidence
+from support_agent.agent.confidence import decide_handoff, score_confidence
 from support_agent.agent.models import get_client, reasoner_kwargs
 from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
@@ -213,7 +213,7 @@ def run_turn(
         )
 
         if resp.stop_reason == "refusal":
-            # The model declined for safety reasons; escalate rather than retry.
+            # Do not retry or fabricate an answer after a model refusal.
             handoff_reason = "model refused the request"
             answer_text = ""
             break
@@ -268,7 +268,7 @@ def run_turn(
         if handoff_reason is not None:
             break
 
-    # 4. Decide the outcome: answer above tau*, escalate below it or on handoff.
+    # 4. Release a relevant supported answer, or acknowledge missing knowledge.
     trace.decision = _finalize(
         trace=trace,
         answer_text=answer_text,
@@ -314,16 +314,12 @@ def _finalize(
     settings = get_settings()
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
 
-    # If the model escalated, or produced no answer, hand off directly.
+    # A missing answer or evidence is not permission to open a staff ticket.
+    # Explicit human requests and verification-required actions route earlier.
     if handoff_reason is not None or not answer_text:
-        confidence = 0.0
-        return _handoff(
-            trace=trace,
-            reason=handoff_reason or "the agent could not produce a grounded answer",
-            confidence=confidence,
-            threshold=settings.handoff_threshold,
-            customer_id=customer_id,
-        )
+        return _unknown(trace, handoff_reason or "No grounded answer was produced.")
+    if not citations:
+        return _unknown(trace, "No supporting sources were retrieved.")
 
     # Score confidence against the sources actually retrieved, then apply tau*.
     if settings.answer_mode == "extractive":
@@ -333,19 +329,13 @@ def _finalize(
             if not quarantine_tool_output("source", source.chunk).triggered
         ]
         if not safe_sources:
-            return _handoff(
-                trace,
-                "No safe source excerpt was available.",
-                0.0,
-                settings.handoff_threshold,
-                customer_id,
-            )
+            return _unknown(trace, "No safe source excerpt was available.")
         source = max(safe_sources, key=lambda item: item.score)
         answer_text = f"{source.source_title}:\n\n{source.chunk}\n\nSource: {source.source_id}."
         citations = [source]
-        conf = ConfidenceResult(
-            score=1.0, reason="Exact excerpt of a retrieved source, not a model certainty estimate."
-        )
+        # A matching quotation can still be irrelevant. Judge it against the
+        # customer's actual question before releasing the excerpt.
+        conf = score_confidence(question=question, answer=answer_text, citations=citations)
     else:
         # Writing tools can only create/update tickets. A model must not claim
         # refunds, password changes, or invented ticket IDs as completed actions.
@@ -373,13 +363,7 @@ def _finalize(
     )
     decision_hint = decide_handoff(conf.score, settings.handoff_threshold)
     if decision_hint.handoff:
-        return _handoff(
-            trace=trace,
-            reason=decision_hint.reason,
-            confidence=conf.score,
-            threshold=decision_hint.threshold,
-            customer_id=customer_id,
-        )
+        return _unknown(trace, "The sources did not establish a relevant, supported answer.")
 
     # Above tau*: gate the answer with the safety classifier, then return it.
     response_gate = refusal.check_response(answer_text)
@@ -400,6 +384,26 @@ def _finalize(
         confidence=conf.score,
         threshold=decision_hint.threshold,
         citations=citations,
+    )
+
+
+def _unknown(trace: Trace, reason: str) -> Decision:
+    text = (
+        "I don't know based on the approved support information available. "
+        "Please share more details, or ask for staff review if you'd like help from a person."
+    )
+    with guardrail_span("knowledge_abstention") as span:
+        span.set("guardrail.abstention.reason", reason)
+    trace.spans.append(
+        SpanRecord(name="knowledge_abstention", kind="guardrail", attributes={"reason": reason})
+    )
+    trace.messages.append(Message(role=Role.ASSISTANT, content=text))
+    return Decision(
+        type=DecisionType.ANSWER,
+        answer=text,
+        confidence=0.0,
+        threshold=get_settings().handoff_threshold,
+        citations=[],
     )
 
 

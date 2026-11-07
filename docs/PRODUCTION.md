@@ -24,8 +24,13 @@ context, then factual answers quote an approved document or authorized order
 record. Identity-recovery requests require a saved staff ticket. Greetings and
 clarifications use controlled replies after semantic classification. Generated prose remains
 an explicit optional mode and is not the mode validated for this demonstration.
-An extractive grounding score of 1 means a source was quoted exactly; it is not
-a calibrated probability of relevance or resolution.
+Extractive responses now undergo the same model-based question-relevance and
+evidence-support check as generated responses. An exact quotation is no longer
+automatically scored 1. Unsupported or irrelevant answers return "I don't know"
+with no citations or automatic staff ticket. Vague requests ask for clarification.
+The score and threshold are not calibrated probabilities of correctness. Explicit
+human requests and required identity/pricing reviews still use the staff inbox.
+Run `python ops/verify_answer_relevance.py` to check relevance and the HTTP flow.
 Pricing and promotional requests route to staff while `PRICING_REQUIRES_REVIEW=1`.
 Keep that setting until approved pricing/promotion policies are connected. Code
 generation is outside this retail support service's scope. Source quotations alone

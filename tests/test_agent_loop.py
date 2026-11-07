@@ -88,7 +88,9 @@ def test_tool_output_pii_is_redacted_before_model_request(make_client, monkeypat
                 ],
                 stop_reason="tool_use",
             ),
-            FakeResponse(content=[TextBlock("The account record is available.")], stop_reason="end_turn"),
+            FakeResponse(
+                content=[TextBlock("The account record is available.")], stop_reason="end_turn"
+            ),
         ]
     )
     monkeypatch.setattr(loop_mod, "get_client", lambda: client)
@@ -103,7 +105,7 @@ def test_tool_output_pii_is_redacted_before_model_request(make_client, monkeypat
     assert "123-45-6789" not in str(trace.decision.citations)
 
 
-def test_low_confidence_hands_off(make_client, monkeypatch):
+def test_missing_evidence_acknowledges_unknown_without_a_ticket(make_client, monkeypatch):
     monkeypatch.setattr(
         loop_mod, "dispatch", lambda name, inp: ToolOutcome(text="ambiguous", citations=[])
     )
@@ -123,13 +125,14 @@ def test_low_confidence_hands_off(make_client, monkeypatch):
 
     trace = loop_mod.run_turn(conversation_id="c2", user_message="Something ambiguous")
 
-    assert trace.decision.type == DecisionType.HANDOFF
-    assert trace.decision.ticket_id is not None
-    assert trace.decision.confidence == 0.15
+    assert trace.decision.type == DecisionType.ANSWER
+    assert trace.decision.ticket_id is None
+    assert "I don't know" in trace.decision.answer
+    assert not trace.decision.citations
 
 
-def test_model_escalation_hands_off(make_client, monkeypatch):
-    """If the model calls escalate_to_human, the loop opens a human ticket."""
+def test_model_cannot_turn_missing_information_into_an_automatic_ticket(make_client, monkeypatch):
+    """Explicit human requests route before the reasoning loop, via validated intent."""
     monkeypatch.setattr(
         loop_mod,
         "dispatch",
@@ -140,7 +143,9 @@ def test_model_escalation_hands_off(make_client, monkeypatch):
         [
             FakeResponse(
                 content=[
-                    ToolUseBlock(id="t1", name="escalate_to_human", input={"reason": "needs a human"})
+                    ToolUseBlock(
+                        id="t1", name="escalate_to_human", input={"reason": "needs a human"}
+                    )
                 ],
                 stop_reason="tool_use",
             )
@@ -150,6 +155,6 @@ def test_model_escalation_hands_off(make_client, monkeypatch):
 
     trace = loop_mod.run_turn(conversation_id="c3", user_message="I need account recovery help")
 
-    assert trace.decision.type == DecisionType.HANDOFF
-    assert "needs a human" in (trace.decision.handoff_reason or "")
-    assert trace.decision.ticket_id is not None
+    assert trace.decision.type == DecisionType.ANSWER
+    assert "I don't know" in trace.decision.answer
+    assert trace.decision.ticket_id is None

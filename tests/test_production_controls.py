@@ -186,7 +186,14 @@ def test_disabled_order_fixtures_never_return_fake_status(monkeypatch):
 
 def test_extractive_answer_cannot_repeat_a_fabricated_action(monkeypatch):
     from support_agent.agent import loop
+    from support_agent.agent.confidence import ConfidenceResult
     from support_agent.schemas import Citation, Message, Trace
+
+    monkeypatch.setattr(
+        loop,
+        "score_confidence",
+        lambda **_: ConfidenceResult(score=0.9, reason="Relevant exact source"),
+    )
 
     monkeypatch.setenv("ANSWER_MODE", "extractive")
     monkeypatch.setenv("SAFETY_MODEL_URL", "")

@@ -6,6 +6,26 @@ Staff can open http://127.0.0.1:8001/admin/inbox and use the private
 
 ## Checks completed
 
+- Current answer-relevance update: 135 automated tests passed, with 3 opt-in
+  database tests skipped. Extractive mode now judges relevance and evidence
+  support instead of automatically scoring a quotation as 1. Missing evidence,
+  irrelevant sources, and low confidence return an unknown response without
+  citations or automatic ticket creation. Vague questions request clarification.
+  The web UI labels unknown responses "Information unavailable". The earlier
+  complete 12-ticket evaluation below predates this change and has not been rerun.
+- Real relevance-judge regression: 5/5 passed. Three product-information questions
+  with an unrelated returns source scored 0; two return/refund timing questions
+  supported by that source scored 1. These are small regression cases, not score
+  calibration or a production-quality guarantee.
+- Live HTTP regression: 3/3 passed. The reported vague product question requested
+  clarification; an unavailable chair material returned "I don't know" with no
+  sources; a known return-window question retained the correct cited answer.
+  Six messages were persisted and no tickets created. A temporary database DNS
+  error interrupted the initial staff-inbox check; `--recover-http` rechecked the
+  saved results and ticket count without repeating model calls. Database report:
+  `b82ba86c-debb-4d48-9453-e309cc1a0375`. Frontend JavaScript syntax and the served
+  page's script security hash also passed.
+
 - Current routing implementation supersedes the phrase/grammar-based versions
   below: customer intent is classified by the configured model using structured
   JSON and recent conversation history. No customer keyword matcher remains in

@@ -102,8 +102,8 @@ class DecisionType(str, Enum):
 class Decision(BaseModel):
     """What the agent decided to do at the end of a run.
 
-    ``confidence`` is the per-turn score; the run answers when it is at or above
-    the handoff threshold tau* and escalates below it.
+    ``confidence`` scores factual evidence support. A low-score ANSWER may be an
+    explicit unknown response without citations; HANDOFF means staff review.
     """
 
     type: DecisionType

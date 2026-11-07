@@ -44,7 +44,9 @@ support: concrete retail issue/question: orders, delivery, returns, billing,
 products, warranty, account help. Profanity does not change a real issue's intent.
 social: greetings, small talk, thanks, or insult-only messages without an issue.
 off_topic: unrelated/general knowledge, entertainment, code-writing requests.
-clarify: no clear request; customer needs to clarify what support they need.
+clarify: no clear request, or a product request without an identified product or
+the requested detail. Ask for clarification instead of choosing an arbitrary
+policy. A vague request to tell about a product is not a request for returns.
 human: explicitly asks to speak to a person, including when also requesting a
 phone number. Doubting an existing saved handoff is handoff_followup instead.
 contact: asks how to contact the store or its phone number without requesting a
@@ -114,7 +116,9 @@ def existing_handoff(history: list[Message]) -> str | None:
 
 
 def conversational_reply(result: IntentResult, history: list[Message]) -> str | None:
-    if result.intent in {Intent.SOCIAL, Intent.OFF_TOPIC, Intent.CLARIFY}:
+    if result.intent == Intent.CLARIFY:
+        return "Could you specify which product or support issue you mean, and what you'd like to know?"
+    if result.intent in {Intent.SOCIAL, Intent.OFF_TOPIC}:
         return (
             "I'm here to help with store support: orders, returns, shipping, billing, "
             "accounts, and products. What can I help you with?"
