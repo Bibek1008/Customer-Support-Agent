@@ -156,10 +156,14 @@ def test_transient_output_parse_failure_retries_same_provider(monkeypatch):
     assert calls[1][1]["response_format"]["json_schema"]["strict"] is True
 
 
-def test_confidence_parse_failure_acknowledges_unknown_instead_of_500(monkeypatch):
+@pytest.mark.parametrize("initial_provider", ["anthropic", "groq"])
+def test_confidence_parse_failure_acknowledges_unknown_instead_of_500(
+    monkeypatch, initial_provider
+):
     from fastapi.testclient import TestClient
 
     from support_agent.agent import models
+    from support_agent.config import get_settings
     from support_agent.schemas import Citation
     from support_agent.server import app
     from support_agent.tools.registry import ToolOutcome
@@ -172,8 +176,14 @@ def test_confidence_parse_failure_acknowledges_unknown_instead_of_500(monkeypatc
         lambda *_: ToolOutcome(text=citation.chunk, citations=[citation]),
     )
 
+    # Server import/config access may have cached the default provider in CI.
+    # Exercise switching from both the clean-checkout and local-demo defaults.
+    monkeypatch.setenv("LLM_PROVIDER", initial_provider)
+    get_settings.cache_clear()
+    assert get_settings().llm_provider == initial_provider
     monkeypatch.setenv("SAFETY_MODEL_URL", "")
     monkeypatch.setenv("LLM_PROVIDER", "groq")
+    get_settings.cache_clear()
     client = GroqClient("test-key")
     monkeypatch.setattr(models, "get_client", lambda: client)
     monkeypatch.setattr("support_agent.agent.loop.get_client", lambda: client)

@@ -186,6 +186,12 @@ def _isolate(monkeypatch):
     monkeypatch.setenv("SAFETY_PROVIDER", "server")
     monkeypatch.setenv("ALLOW_FIXTURE_ORDERS", "1")
     monkeypatch.setenv("ANSWER_MODE", "generated")
+    from support_agent.config import Settings, get_settings
+
+    # Local credentials/provider choices must not mask clean-checkout failures.
+    # Integration jobs supply their test database explicitly through environment.
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    get_settings.cache_clear()
     # Most tests exercise downstream support behavior independently of routing.
     # Semantic classifier tests supply structured provider responses explicitly.
     import support_agent.agent.loop as loop_mod
@@ -198,10 +204,6 @@ def _isolate(monkeypatch):
             intent=Intent.SUPPORT, phone_requested=False, reason="isolated support flow"
         ),
     )
-    from support_agent.config import get_settings
-
-    get_settings.cache_clear()
-
     import support_agent.guardrails.safety as safety_mod
     import support_agent.kb.store as store_mod
     import support_agent.tools.ticketing as ticketing_mod
