@@ -81,7 +81,14 @@ def sanitize(value):
         redactor = object.__new__(PIIRedactor)
         return redactor._redact_regex(redactor._redact_ssn(value).text).text
     if isinstance(value, dict):
-        return {str(key): sanitize(item) for key, item in value.items()}
+        return {
+            str(key): (
+                "<OPAQUE_SIGNATURE>"
+                if key in {"thought_signature", "thoughtSignature"}
+                else sanitize(item)
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, (tuple, list)):
         return [sanitize(item) for item in value]
     if hasattr(value, "model_dump"):
@@ -332,7 +339,12 @@ class _Span:
             self._observation.update(**sanitize(kwargs))
         elif self._span is not None:
             for key, value in kwargs.items():
-                self.set(f"langfuse.observation.{key}", value)
+                self.set(
+                    "langfuse.observation.model.name"
+                    if key == "model"
+                    else f"langfuse.observation.{key}",
+                    value,
+                )
 
     def set(self, key: str, value):
         self._metadata[key] = value
@@ -346,6 +358,7 @@ class _Span:
 
     def record_cost(self, cost: CostRecord):
         self.update(
+            model=cost.model,
             usage_details={
                 "input": cost.input_tokens,
                 "output": cost.output_tokens,
@@ -359,6 +372,14 @@ class _Span:
     def record_response(self, response):
         if self._observation is None and self._span is None:
             return
+        if actual_model := getattr(response, "model", None):
+            self.update(model=actual_model)
+            self.set("gen_ai.response.model", actual_model)
+        if provider := getattr(response, "provider", None):
+            self.set("gen_ai.provider.name", provider)
+        if fallback_from := getattr(response, "fallback_from", None):
+            self.set("fallback.from", fallback_from)
+            self.set("fallback.reason", "quota")
         blocks = sanitize(response.content)
         text = "\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         output = {"role": "assistant", "content": text or None}

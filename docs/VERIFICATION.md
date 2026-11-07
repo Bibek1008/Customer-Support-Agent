@@ -6,6 +6,22 @@ Staff can open http://127.0.0.1:8001/admin/inbox and use the private
 
 ## Checks completed
 
+- Gemini quota fallback: 160 automated tests passed, 3 database opt-in tests
+  skipped. Tests cover quota-only switching, separate credentials, bounded
+  attempts, cooldown, actual-model cost/tracing, thinking tokens, cross-provider
+  tool metadata, no replay of completed actions, and fail-closed safety.
+- Live fallback regression: 8/8 completed cases passed with Groq 429 simulated
+  only inside the verification process and real Gemini responses. Two intent
+  cases, five safe/unsafe policy cases, and a full cited return-policy turn passed.
+  One initial full-turn attempt stopped on unavailable safety; it failed closed.
+  The completed cases were retained and the full turn passed on resume. This small
+  regression is not production safety calibration. Database report:
+  `9932607b-434f-4182-8093-2ebd5bc9513d`; full-turn trace:
+  `dd73a4b962ad3bfa6b6fc33eecdbefef`.
+  That trace was audited through the Langfuse CLI: intent, reasoning, relevance,
+  and safety generations show the actual Gemini model and token usage; retrieval
+  and fallback guardrail observations are present.
+
 - Current answer-relevance update: 135 automated tests passed, with 3 opt-in
   database tests skipped. Extractive mode now judges relevance and evidence
   support instead of automatically scoring a quotation as 1. Missing evidence,

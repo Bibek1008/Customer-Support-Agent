@@ -138,3 +138,50 @@ def test_disabled_tracing_never_initializes_client(monkeypatch):
     monkeypatch.setattr(tracing, "get_langfuse", lambda: pytest.fail("Tracing should be disabled"))
     with tracing.model_span("any-model") as span:
         span.update(input="ignored")
+
+
+def test_fallback_trace_records_actual_gemini_model_usage_and_provider(captured, monkeypatch):
+    import httpx
+
+    from support_agent.agent.fallback import QuotaFallbackClient
+    from support_agent.agent.groq_client import GeminiClient, GroqClient
+    from support_agent.observability.cost import cost_from_usage
+    from tests.test_groq_client import _response
+
+    client, exporter = captured
+    monkeypatch.setenv("GEMINI_API_KEY", "secret-gemini-key")
+    get_settings.cache_clear()
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda url, **_: (
+            httpx.Response(429) if url == GroqClient.endpoint else _response({"content": "Ready"})
+        ),
+    )
+    fallback = QuotaFallbackClient(
+        GroqClient("secret-provider-key"), GeminiClient("secret-gemini-key")
+    )
+    with tracing.model_span(
+        "openai/gpt-oss-20b", name="fallback-test", input=[{"role": "user", "content": "Hello"}]
+    ) as span:
+        response = fallback.create(
+            model="openai/gpt-oss-20b",
+            max_tokens=256,
+            system="Support",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        span.record_response(response)
+        span.record_cost(cost_from_usage("openai/gpt-oss-20b", response.usage))
+    client.flush()
+    generation = next(s for s in exporter.get_finished_spans() if s.name == "fallback-test")
+    assert generation.attributes["langfuse.observation.model.name"] == "gemini-3.5-flash-lite"
+    assert (
+        json.loads(generation.attributes["langfuse.observation.metadata.gen_ai.provider.name"])
+        == "gemini"
+    )
+    assert (
+        json.loads(generation.attributes["langfuse.observation.metadata.fallback.from"]) == "groq"
+    )
+    assert json.loads(generation.attributes["langfuse.observation.usage_details"])["input"] == 120
+    serialized = json.dumps([dict(s.attributes) for s in exporter.get_finished_spans()])
+    assert "secret-gemini-key" not in serialized

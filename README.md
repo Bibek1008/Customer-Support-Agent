@@ -31,7 +31,9 @@ this demonstration's traffic; it is not a public-traffic capacity guarantee.
 Use a Groq account on its Free plan for chat and confidence scoring, FastEmbed
 for CPU embeddings, and a Neon Free project for PostgreSQL. Groq and Neon usage
 limits still apply; this is not unlimited hosted inference. No Anthropic or
-OpenAI API key is needed for this configuration. There is no paid-provider fallback.
+OpenAI API key is needed for this configuration. Gemini quota fallback is opt-in;
+enable `GEMINI_FALLBACK_ENABLED=1` with `GEMINI_API_KEY` to use it. Gemini requests
+consume that project's quota and may incur charges according to its billing tier.
 
 Install the additional local embedding dependency:
 

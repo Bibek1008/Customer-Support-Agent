@@ -27,6 +27,9 @@ class Rate:
 # 2026-08-31; the standard rate is used here so cost is never understated. Swap
 # to the intro rate only for runs you know fall inside the intro window.
 MODEL_RATES: dict[str, Rate] = {
+    # Google standard text rates, verified 2026-11-07:
+    # https://ai.google.dev/gemini-api/docs/pricing#gemini-3.5-flash-lite
+    "gemini-3.5-flash-lite": Rate(input_per_mtok=0.30, output_per_mtok=2.50),
     # Groq published list rates: https://console.groq.com/docs/model/openai/gpt-oss-20b
     # For Groq this is a list-price equivalent, not the bill on a Free plan.
     "openai/gpt-oss-20b": Rate(input_per_mtok=0.075, output_per_mtok=0.30),
@@ -49,6 +52,8 @@ def cost_from_usage(model: str, usage: object) -> CostRecord:
     Anthropic SDK ``Usage`` model, or a plain dict-like stand-in in tests).
     Unknown models raise, because we refuse to invent a price.
     """
+    # A quota fallback's real model must replace the requested primary model.
+    model = getattr(usage, "model", None) or model
     if model not in MODEL_RATES:
         raise KeyError(
             f"No published rate for model {model!r}; add it to MODEL_RATES "

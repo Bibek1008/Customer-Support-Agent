@@ -17,6 +17,7 @@ checks cannot silently pass in production. Hosted quota failures are retryable.
 from __future__ import annotations
 
 import json
+import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import Enum
@@ -80,6 +81,8 @@ class SafetyVerdict:
     categories: list[str]  # e.g. ["S1"] hazard codes when unsafe
     checked: bool  # False when no safety server was available
     cost_usd: float = 0.0
+    provider: str = ""
+    fallback_from: str | None = None
 
     @property
     def blocked(self) -> bool:
@@ -91,6 +94,7 @@ class SafetyClassifier:
 
     def __init__(self) -> None:
         self.settings = get_settings()
+        self._retry_groq_after = 0.0
 
     def classify(self, text: str, role: SafetyRole) -> SafetyVerdict:
         with guardrail_span("safety") as span:
@@ -111,6 +115,10 @@ class SafetyClassifier:
             span.set("guardrail.safety.categories", ",".join(verdict.categories))
             span.set("guardrail.safety.checked", True)
             span.set("guardrail.safety.cost_usd", verdict.cost_usd)
+            span.set("guardrail.safety.provider", verdict.provider or self.settings.safety_provider)
+            if verdict.fallback_from:
+                span.set("fallback.from", verdict.fallback_from)
+                span.set("fallback.to", verdict.provider)
             return verdict
 
     def _call_server(self, text: str, role: SafetyRole) -> SafetyVerdict:
@@ -118,6 +126,12 @@ class SafetyClassifier:
         # server applies the Guard prompt template and returns a short verdict.
         messages = [{"role": role.value, "content": text}]
         groq = self.settings.safety_provider == "groq"
+        if (
+            groq
+            and self.settings.gemini_fallback_enabled
+            and time.monotonic() < self._retry_groq_after
+        ):
+            return self._call_gemini(text, role)
         url = (
             "https://api.groq.com/openai/v1/chat/completions"
             if groq
@@ -156,6 +170,13 @@ class SafetyClassifier:
                 if groq and resp.status_code == 429:
                     from support_agent.agent.groq_client import GroqRequestError
 
+                    if self.settings.gemini_fallback_enabled:
+                        self._retry_groq_after = time.monotonic() + 60
+                        span.update(
+                            level="WARNING",
+                            status_message="Groq safety quota reached; using Gemini",
+                        )
+                        return self._call_gemini(text, role)
                     raise GroqRequestError(
                         "Safety provider quota reached. Please retry later.", 429
                     )
@@ -184,6 +205,70 @@ class SafetyClassifier:
         if cost:
             verdict.cost_usd = cost.usd
         return verdict
+
+    def _call_gemini(self, text: str, role: SafetyRole) -> SafetyVerdict:
+        """Same retail policy and validated verdict; never fail open on fallback."""
+        from support_agent.agent.groq_client import GeminiClient, GroqRequestError
+
+        messages = [{"role": "user", "content": json.dumps({"role": role.value, "content": text})}]
+        schema = {
+            "type": "object",
+            "properties": {
+                "safe": {"type": "boolean"},
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "VIOLENCE",
+                            "SELF_HARM",
+                            "SEXUAL_ABUSE",
+                            "ABUSE",
+                            "ILLEGAL",
+                            "PRIVACY",
+                            "INJECTION",
+                        ],
+                    },
+                },
+            },
+            "required": ["safe", "categories"],
+            "additionalProperties": False,
+        }
+        try:
+            with model_span(
+                self.settings.gemini_fallback_model,
+                name="classify-safety-fallback",
+                input=[{"role": "system", "content": SUPPORT_SAFETY_POLICY}, *messages],
+            ) as span:
+                response = GeminiClient(self.settings.gemini_api_key).messages.create(
+                    model=self.settings.gemini_fallback_model,
+                    max_tokens=1024,
+                    system=SUPPORT_SAFETY_POLICY,
+                    messages=messages,
+                    output_config={"format": {"type": "json_schema", "schema": schema}},
+                )
+                response.fallback_from = "groq"
+                cost = cost_from_usage(self.settings.gemini_fallback_model, response.usage)
+                span.record_response(response)
+                span.record_cost(cost)
+            content = next((block.text for block in response.content if block.type == "text"), "")
+            verdict = self._parse_groq(content)
+            verdict.cost_usd = cost.usd
+            verdict.provider = "gemini"
+            verdict.fallback_from = "groq"
+            return verdict
+        except GroqRequestError as error:
+            if error.status_code == 429:
+                raise
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError):
+            pass
+        return SafetyVerdict(
+            safe=False,
+            categories=["UNAVAILABLE"],
+            checked=True,
+            provider="gemini",
+            fallback_from="groq",
+        )
 
     @staticmethod
     def _parse_groq(content: str) -> SafetyVerdict:

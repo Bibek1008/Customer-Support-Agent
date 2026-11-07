@@ -1,6 +1,7 @@
 """Translate the loop's message blocks to Groq's Chat Completions API.
 
-Only Groq is contacted. There is no automatic fallback to a paid provider.
+Groq is the default. The Gemini subclass uses Google's compatibility endpoint.
+Provider switching is an explicit, quota-only wrapper in ``fallback.py``.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ def _field(block, name, default=None):
     return block.get(name, default) if isinstance(block, dict) else getattr(block, name, default)
 
 
-def _messages(system: str, messages: list[dict]) -> list[dict]:
+def _messages(system: str, messages: list[dict], *, gemini: bool = False) -> list[dict]:
     result = [{"role": "system", "content": system}]
     for message in messages:
         content = message["content"]
@@ -52,6 +53,12 @@ def _messages(system: str, messages: list[dict]) -> list[dict]:
                         },
                     }
                 )
+                if gemini:
+                    # Preserve Google's opaque signature. Migrated Groq calls
+                    # use Google's documented cross-model history marker.
+                    calls[-1]["extra_content"] = _field(block, "extra_content") or {
+                        "google": {"thought_signature": "skip_thought_signature_validator"}
+                    }
             elif kind == "tool_result":
                 result.append(
                     {
@@ -75,15 +82,15 @@ class GroqClient:
 
     def __init__(self, api_key: str) -> None:
         if not api_key or api_key.startswith("your-"):
-            raise RuntimeError("Set GROQ_API_KEY in .env to a valid Groq API key.")
+            raise RuntimeError(f"Set a valid {self.provider.upper()}_API_KEY in .env.")
         self._api_key = api_key
         self.messages = self
 
     def create(self, *, model, max_tokens, system, messages, tools=None, output_config=None):
         payload = {
             "model": model,
-            "messages": _messages(system, messages),
-            "max_completion_tokens": max_tokens,
+            "messages": _messages(system, messages, gemini=self.provider == "gemini"),
+            "max_tokens" if self.provider == "gemini" else "max_completion_tokens": max_tokens,
             "reasoning_effort": "low",
         }
         if tools:
@@ -110,7 +117,7 @@ class GroqClient:
             }
         for attempt in range(2):
             response = httpx.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                self.endpoint,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 json=payload,
                 timeout=remaining_timeout(),
@@ -131,17 +138,20 @@ class GroqClient:
                 raise GroqOutputError("Groq could not generate a valid response.", 502)
         if response.status_code == 429:
             raise GroqRequestError(
-                "Groq usage limit reached. Wait before retrying; no fallback was used.", 429
+                f"{self.provider.title()} usage limit reached. Please retry later.", 429
             )
         if response.is_error:
             # Do not expose provider error bodies: they can include customer input.
             raise GroqRequestError(
-                f"Groq request failed (HTTP {response.status_code}).", response.status_code
+                f"{self.provider.title()} request failed (HTTP {response.status_code}).",
+                response.status_code,
             )
         try:
             data = response.json()
             choice = data["choices"][0]
             message = choice["message"]
+            if choice.get("finish_reason") in {"content_filter", "safety", "blocked"}:
+                raise ValueError("Provider safety filter declined the response")
             if not isinstance(message, dict) or (
                 message.get("content") is not None and not isinstance(message["content"], str)
             ):
@@ -169,15 +179,41 @@ class GroqClient:
                     id=call["id"],
                     name=function["name"],
                     input=json.loads(function["arguments"]),
+                    extra_content=call.get("extra_content"),
                 )
             )
         usage = data.get("usage", {})
+        output_tokens = usage.get("completion_tokens", 0)
+        if self.provider == "gemini":
+            # Google may exclude thinking from visible completions, but include
+            # it in total_tokens and bill it at the output rate.
+            if usage.get("total_tokens") is not None:
+                output_tokens = max(
+                    output_tokens, usage["total_tokens"] - usage.get("prompt_tokens", 0)
+                )
+            else:
+                output_tokens += (usage.get("completion_tokens_details") or {}).get(
+                    "reasoning_tokens", 0
+                )
         return SimpleNamespace(
+            model=model,
+            provider=self.provider,
             content=blocks,
             reasoning=message.get("reasoning"),
             stop_reason="tool_use" if message.get("tool_calls") else "end_turn",
             usage=SimpleNamespace(
+                model=model,
                 input_tokens=usage.get("prompt_tokens", 0),
-                output_tokens=usage.get("completion_tokens", 0),
+                output_tokens=output_tokens,
             ),
         )
+
+    provider = "groq"
+    endpoint = "https://api.groq.com/openai/v1/chat/completions"
+
+
+class GeminiClient(GroqClient):
+    """Same validated message interface, with Gemini-specific metadata preserved."""
+
+    provider = "gemini"
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"

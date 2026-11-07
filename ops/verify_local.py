@@ -20,6 +20,14 @@ def main():
     args = parser.parse_args()
     settings = get_settings()
     with httpx.Client(base_url="http://127.0.0.1:8001", timeout=210, trust_env=False) as client:
+        for attempt in range(30):
+            try:
+                client.get("/readyz").raise_for_status()
+                break
+            except httpx.HTTPError:
+                if attempt == 29:
+                    raise
+                time.sleep(1)
         page = client.get("/")
         page.raise_for_status()
         assert "sha256-" in page.headers["content-security-policy"]

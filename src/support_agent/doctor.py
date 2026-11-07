@@ -20,6 +20,8 @@ def inspect(providers=False):
         "pii": "presidio" if get_redactor()._presidio else "fallback",
         "tracing_enabled": settings.tracing_enabled,
         "safety_provider": settings.safety_provider,
+        "gemini_fallback_enabled": settings.gemini_fallback_enabled,
+        "gemini_fallback_model": settings.gemini_fallback_model,
     }
     check_database()
     checks["database"] = "connected"

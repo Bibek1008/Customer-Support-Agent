@@ -65,6 +65,8 @@ class Settings(BaseSettings):
             missing.append("configured safety classifier")
         if self.safety_provider == "groq" and not self.groq_api_key:
             missing.append("GROQ_API_KEY for safety")
+        if self.gemini_fallback_enabled and not self.gemini_api_key:
+            missing.append("GEMINI_API_KEY for enabled fallback")
         if self.allow_fixture_orders and self.business_mode != "demo":
             missing.append("ALLOW_FIXTURE_ORDERS=0")
         if missing:
@@ -74,6 +76,10 @@ class Settings(BaseSettings):
     llm_provider: Literal["anthropic", "groq"] = Field(default="anthropic", alias="LLM_PROVIDER")
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     groq_model: str = Field(default="openai/gpt-oss-20b", alias="GROQ_MODEL")
+    gemini_fallback_enabled: bool = Field(default=False, alias="GEMINI_FALLBACK_ENABLED")
+    gemini_fallback_model: Literal["gemini-3.5-flash-lite"] = Field(
+        default="gemini-3.5-flash-lite", alias="GEMINI_FALLBACK_MODEL"
+    )
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     agent_model: str = Field(default="claude-opus-4-8", alias="AGENT_MODEL")
     router_model: str = Field(default="claude-sonnet-5", alias="ROUTER_MODEL")

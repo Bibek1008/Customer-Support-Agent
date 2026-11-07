@@ -23,10 +23,13 @@ from support_agent.config import get_settings
 
 def validate_credentials() -> None:
     settings = get_settings()
+    if settings.gemini_fallback_enabled and not settings.gemini_api_key:
+        raise RuntimeError("GEMINI_API_KEY is required when Gemini fallback is enabled.")
     if settings.llm_provider == "groq" and not settings.groq_api_key:
         raise RuntimeError("GROQ_API_KEY is required for the configured Groq provider.")
     if settings.llm_provider == "anthropic" and not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is required for the configured Anthropic provider.")
+
 
 try:
     import anthropic
@@ -41,13 +44,17 @@ def get_client():
     """Return the configured provider's client; credentials come from settings."""
     settings = get_settings()
     if settings.llm_provider == "groq":
-        from support_agent.agent.groq_client import GroqClient
+        from support_agent.agent.groq_client import GeminiClient, GroqClient
 
-        return GroqClient(settings.groq_api_key)
+        primary = GroqClient(settings.groq_api_key)
+        if settings.gemini_fallback_enabled:
+            from support_agent.agent.fallback import QuotaFallbackClient
+
+            return QuotaFallbackClient(primary, GeminiClient(settings.gemini_api_key))
+        return primary
     if not _ANTHROPIC_AVAILABLE:
         raise RuntimeError(
-            "The 'anthropic' package is not installed. Install dependencies to "
-            "run the agent loop."
+            "The 'anthropic' package is not installed. Install dependencies to run the agent loop."
         )
     # The SDK falls back to ANTHROPIC_API_KEY in the environment; we pass ours
     # explicitly only when it is set, so a profile-based login still works.
