@@ -84,8 +84,9 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "create_ticket",
         "description": (
-            "Create a support ticket. Use when the issue needs a record or "
-            "a follow-up. A state-changing tool."
+            "Create a support ticket only when the customer explicitly requests "
+            "a ticket or staff follow-up. A policy question or low confidence "
+            "is not authorization. A state-changing tool."
         ),
         "strict": True,
         "input_schema": {
@@ -240,7 +241,12 @@ def dispatch(name: str, tool_input: dict) -> ToolOutcome:
             body=tool_input["body"],
             customer_id=tool_input.get("customer_id"),
         )
-        return ToolOutcome(text=result.text, ticket_id=result.ticket_id)
+        return ToolOutcome(
+            text=result.text,
+            ticket_id=result.ticket_id,
+            is_handoff=bool(result.ticket_id),
+            handoff_reason="Customer requested a support ticket." if result.ticket_id else None,
+        )
 
     if name == "update_ticket_status":
         result = ticketing.update_ticket_status(

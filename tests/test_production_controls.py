@@ -395,7 +395,11 @@ def test_identity_recovery_requires_a_real_saved_ticket(monkeypatch):
 def test_followup_explains_existing_handoff_without_creating_another_ticket(monkeypatch):
     from support_agent.agent import loop
     from support_agent.guardrails.conversation import IntentResult
-    from support_agent.schemas import Message
+    from support_agent.schemas import Message, Ticket
+    from support_agent.tools.ticketing import _backend
+
+    ticket = Ticket(id="tkt_54f3888d992e", subject="Synthetic handoff", body="Saved request")
+    _backend()._memory[ticket.id] = ticket
 
     monkeypatch.setattr(
         loop,
@@ -413,6 +417,6 @@ def test_followup_explains_existing_handoff_without_creating_another_ticket(monk
             )
         ],
     )
-    assert result.decision.type.value == "answer"
+    assert result.decision.type.value == "handoff"
     assert "saved for staff review" in result.decision.answer
-    assert result.decision.ticket_id is None
+    assert result.decision.ticket_id == ticket.id

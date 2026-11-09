@@ -140,6 +140,84 @@ def test_disabled_tracing_never_initializes_client(monkeypatch):
         span.update(input="ignored")
 
 
+def test_identifier_masking_preserves_replay_without_unmasking_secrets(monkeypatch):
+    identifier = "92680627-5838-4018-8d8d-13353720bba5"
+    payload = {
+        "request_id": identifier,
+        "conversation_id": identifier,
+        "body": "Email jane@example.com, card 4111111111111111",
+    }
+    clean = tracing.sanitize(payload)
+    assert clean["request_id"] == identifier
+    assert clean["conversation_id"] == identifier
+    assert "jane@example.com" not in clean["body"]
+    assert "4111111111111111" not in clean["body"]
+    monkeypatch.setenv("SERVICE_API_KEY", identifier)
+    get_settings.cache_clear()
+    assert tracing.sanitize(payload)["request_id"] == "<SECRET>"
+
+
+def test_created_and_reused_ticket_exports_match_activity(captured, monkeypatch, make_client):
+    from support_agent.agent import loop
+    from support_agent.guardrails.conversation import IntentResult
+    from support_agent.observability.audit import capture_events
+
+    client, exporter = captured
+    monkeypatch.setattr(
+        loop,
+        "classify_intent",
+        lambda *_: IntentResult(intent="ticket", phone_requested=False, reason="Explicit request"),
+    )
+    fake = make_client(
+        [
+            FakeResponse(
+                content=[
+                    ToolUseBlock(
+                        id="create",
+                        name="create_ticket",
+                        input={
+                            "subject": "jane@example.com",
+                            "body": "Follow up on SSN 123-45-6789",
+                        },
+                    )
+                ],
+                stop_reason="tool_use",
+            )
+        ]
+    )
+    monkeypatch.setattr(loop, "get_client", lambda: fake)
+    with capture_events() as created_events:
+        first = loop.run_turn("trace-ticket", "Please open a ticket for jane@example.com")
+    monkeypatch.setattr(loop, "get_client", lambda: pytest.fail("No generation on ticket reuse"))
+    with capture_events() as reused_events:
+        second = loop.run_turn("trace-ticket", "Follow up on my request", history=first.messages)
+    client.flush()
+    spans = exporter.get_finished_spans()
+    roots = [s for s in spans if s.parent is None]
+    assert len(roots) == 2
+    for root in roots:
+        assert (
+            json.loads(root.attributes["langfuse.observation.metadata.ticket_id"])
+            == first.decision.ticket_id
+        )
+        assert json.loads(root.attributes["langfuse.observation.metadata.handoff"]) is True
+    write = next(s for s in spans if s.name == "run-create-ticket")
+    assert (
+        json.loads(write.attributes["langfuse.observation.output"])["ticket_id"]
+        == first.decision.ticket_id
+    )
+    assert any(s.name == "check-refusal-input" for s in spans)
+    assert any(s.name == "check-safety" for s in spans)
+    assert first.decision.ticket_id == second.decision.ticket_id
+    for events, action in [(created_events, "created"), (reused_events, "reused")]:
+        event = next(e for e in events if e["check"] == "ticket_state")
+        assert event["ticket.action"] == action
+        assert event["ticket.id"] == first.decision.ticket_id
+    serialized = json.dumps([dict(s.attributes) for s in spans])
+    for private in ("jane@example.com", "123-45-6789", "secret-provider-key"):
+        assert private not in serialized
+
+
 def test_fallback_trace_records_actual_gemini_model_usage_and_provider(captured, monkeypatch):
     import httpx
 
@@ -185,3 +263,51 @@ def test_fallback_trace_records_actual_gemini_model_usage_and_provider(captured,
     assert json.loads(generation.attributes["langfuse.observation.usage_details"])["input"] == 120
     serialized = json.dumps([dict(s.attributes) for s in exporter.get_finished_spans()])
     assert "secret-gemini-key" not in serialized
+
+
+def test_trace_id_does_not_prove_export_or_hosted_delivery(monkeypatch):
+    from opentelemetry.sdk.trace.export import SpanExportResult
+
+    from support_agent.schemas import Decision, DecisionType, Trace
+
+    class FailedExporter(InMemorySpanExporter):
+        attempts = 0
+
+        def export(self, spans):
+            self.attempts += 1
+            return SpanExportResult.FAILURE
+
+    exporter = FailedExporter()
+    monkeypatch.setenv("TRACING_ENABLED", "1")
+    get_settings.cache_clear()
+    client = Langfuse(
+        public_key=f"pk-lf-{uuid4()}",
+        secret_key="synthetic-secret",
+        base_url="https://example.invalid",
+        tracer_provider=TracerProvider(),
+        span_exporter=exporter,
+        mask_otel_spans=tracing.mask_otel_spans,
+    )
+    monkeypatch.setattr(tracing, "get_langfuse", lambda: client)
+
+    @tracing.trace_turn
+    def controlled_turn(conversation_id, user_message):
+        return Trace(
+            conversation_id=conversation_id,
+            decision=Decision(
+                type=DecisionType.ANSWER,
+                answer="Synthetic controlled response",
+                confidence=0,
+                threshold=0.6,
+            ),
+        )
+
+    try:
+        result = controlled_turn("synthetic-session", "Synthetic input")
+        client.flush()
+        assert result.langfuse_trace_id
+        assert exporter.attempts > 0
+        assert not exporter.get_finished_spans()
+        assert "delivered" not in result.model_dump()
+    finally:
+        client.shutdown()

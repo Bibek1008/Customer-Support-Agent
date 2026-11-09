@@ -38,8 +38,8 @@ def escalate_to_human(
         subject="Escalated to human agent",
         body=body,
         customer_id=customer_id,
+        status=TicketStatus.ESCALATED,
     )
-    _backend().update_status(ticket.id, TicketStatus.ESCALATED)
 
     message = (
         "I couldn't verify an answer, so I've saved your request for support review. "

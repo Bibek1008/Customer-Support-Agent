@@ -282,11 +282,11 @@ def test_inference_fallback_does_not_replay_completed_tool(monkeypatch):
                 {
                     "tool_calls": [
                         {
-                            "id": "create-1",
+                            "id": "update-1",
                             "type": "function",
                             "function": {
-                                "name": "create_ticket",
-                                "arguments": '{"subject":"Synthetic case","body":"Support request"}',
+                                "name": "update_ticket_status",
+                                "arguments": '{"ticket_id":"tkt_123456789abc","status":"resolved"}',
                             },
                         }
                     ]
@@ -319,9 +319,9 @@ def test_inference_fallback_does_not_replay_completed_tool(monkeypatch):
     monkeypatch.setattr(
         loop, "score_confidence", lambda **_: ConfidenceResult(score=0.9, reason="Supported")
     )
-    loop.run_turn("fallback-write", "Please record my support issue")
-    assert writes == ["create_ticket"]
+    loop.run_turn("fallback-write", "Please resolve my existing support ticket")
+    assert writes == ["update_ticket_status"]
     assert (
         next(m for m in payloads[0]["messages"] if m["role"] == "tool")["tool_call_id"]
-        == "create-1"
+        == "update-1"
     )

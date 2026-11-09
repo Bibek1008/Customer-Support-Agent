@@ -19,6 +19,7 @@ class Intent(str, Enum):
     OFF_TOPIC = "off_topic"
     CLARIFY = "clarify"
     HUMAN = "human"
+    TICKET = "ticket"
     CONTACT = "contact"
     HANDOFF_FOLLOWUP = "handoff_followup"
     ACCOUNT_RECOVERY = "account_recovery"
@@ -49,6 +50,9 @@ the requested detail. Ask for clarification instead of choosing an arbitrary
 policy. A vague request to tell about a product is not a request for returns.
 human: explicitly asks to speak to a person, including when also requesting a
 phone number. Doubting an existing saved handoff is handoff_followup instead.
+ticket: explicitly asks to create/open/log a support ticket or requests staff
+follow-up, without asking to speak to a person. A policy or refund question by
+itself is support, not permission to create a ticket.
 contact: asks how to contact the store or its phone number without requesting a
 handoff. If a handoff is also requested, choose human.
 handoff_followup: asks about an existing handoff, whether staff will really reply,
@@ -129,14 +133,9 @@ def conversational_reply(result: IntentResult, history: list[Message]) -> str | 
             "staff review here and check this chat for a reply."
         )
     if result.intent == Intent.HANDOFF_FOLLOWUP:
-        reference = existing_handoff(history)
-        if not reference:
-            return "I don't see a saved support reference in the recent chat. Would you like staff review?"
-        return (
-            f"Your request is saved for staff review. Your existing reference is {reference}. "
-            "A reply depends on staff reviewing the inbox; I can't guarantee a response "
-            "time. You can check this chat for a reply."
-        )
+        # The loop handles verified tickets before this fallback. An old textual
+        # reference alone is not proof that a ticket still exists.
+        return "I don't see a verified saved support request. Would you like staff review?"
     if result.intent == Intent.UNSAFE:
         return "I can't help with that request. I can help with legitimate store support issues."
     return None
