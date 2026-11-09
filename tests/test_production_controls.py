@@ -73,7 +73,7 @@ def test_unapproved_pricing_and_code_requests_do_not_quote_unrelated_policy(monk
     assert not result.decision.citations
 
 
-def test_greeting_prefix_cannot_bypass_support_request(monkeypatch, make_client):
+def test_greeting_prefix_cannot_bypass_support_request(monkeypatch, make_client, kb):
     from support_agent.agent import loop
     from tests.conftest import FakeResponse, TextBlock
 

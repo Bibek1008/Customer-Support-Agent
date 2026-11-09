@@ -197,7 +197,7 @@ def test_clean_text_is_left_alone():
     assert result.text == "How long is the return window?"
 
 
-def test_redacted_text_is_stored_and_sent_to_model(make_client, monkeypatch, caplog):
+def test_redacted_text_is_stored_and_sent_to_model(make_client, monkeypatch, caplog, kb):
     """Raw PII is removed from traces, history, and model requests."""
     import support_agent.agent.loop as loop_mod
     from support_agent.schemas import Message, Role
