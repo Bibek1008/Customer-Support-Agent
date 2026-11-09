@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "A customer-support agent safe to put in front of real users: tool use over a knowledge base and ticketing, guardrails on every step, confidence-based human handoff, and an offline eval suite."
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
 authors = [{ name = "Vizuara AI Labs" }]
 
 dependencies = [
