@@ -7,6 +7,8 @@ agent loop and the guardrails; the service just exposes them over HTTP.
 
 from __future__ import annotations
 
+import logging
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -25,14 +27,33 @@ from support_agent.schemas import Citation, DecisionType, Message
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from support_agent.db import close_pool
-    from support_agent.http_api import startup
+    import asyncio
 
-    startup()
-    get_langfuse()
+    from support_agent.db import close_pool
+    from support_agent.http_api import check_production_dependencies, startup
+
+    started = time.perf_counter()
+    settings = get_settings()
+    startup(defer_dependencies=settings.app_env == "production")
+    readiness_task = None
+    if settings.app_env == "production":
+        readiness_task = asyncio.create_task(asyncio.to_thread(check_production_dependencies))
+    else:
+        get_langfuse()
+    logging.getLogger(__name__).info(
+        "startup operation=lifespan_setup elapsed_ms=%.1f status=ok",
+        (time.perf_counter() - started) * 1000,
+    )
     try:
         yield
     finally:
+        if readiness_task is not None:
+            try:
+                await readiness_task
+            except Exception as error:  # noqa: BLE001 - background readiness must not break shutdown
+                logging.getLogger(__name__).warning(
+                    "startup readiness unavailable failure=%s", type(error).__name__
+                )
         shutdown_tracing()
         close_pool()
 

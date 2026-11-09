@@ -1,6 +1,8 @@
 """Security boundaries and safe behavior, without provider calls."""
 
+import threading
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -105,6 +107,117 @@ def test_persistent_development_startup_checks_schema_without_migrating(monkeypa
     http_api.startup()
 
     assert checked == [True]
+
+
+def _configure_production(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("PERSISTENCE_ENABLED", "1")
+    monkeypatch.setenv("APP_ORIGIN", "https://testserver")
+    monkeypatch.setenv("ADMIN_API_KEY", "a" * 40)
+    monkeypatch.setenv("SERVICE_API_KEY", "b" * 40)
+    monkeypatch.setenv("LLM_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "mock-groq-key")
+    monkeypatch.setenv("SAFETY_PROVIDER", "groq")
+    monkeypatch.setenv("ALLOW_FIXTURE_ORDERS", "0")
+    get_settings.cache_clear()
+
+
+def test_production_startup_defers_network_checks_and_safety_inference(monkeypatch):
+    from support_agent import http_api
+    from support_agent.agent import models
+    from support_agent.guardrails.safety import SafetyClassifier
+
+    _configure_production(monkeypatch)
+    validated = []
+    dependency_check = http_api.check_production_dependencies
+    monkeypatch.setattr(models, "validate_credentials", lambda: validated.append(True))
+    monkeypatch.setattr(
+        SafetyClassifier,
+        "classify",
+        lambda *args, **kwargs: pytest.fail("Startup must not call hosted safety inference"),
+    )
+    monkeypatch.setattr(
+        http_api,
+        "check_production_dependencies",
+        lambda: pytest.fail("Blocking readiness checks must run after HTTP startup"),
+    )
+
+    http_api.startup(defer_dependencies=True)
+
+    assert validated == [True]
+    assert http_api.readiness_status() == "starting"
+
+    monkeypatch.setattr(http_api, "check_production_dependencies", dependency_check)
+    monkeypatch.setattr(http_api, "get_redactor", lambda: SimpleNamespace(_presidio=True))
+    checks = []
+    monkeypatch.setattr(http_api, "check_production_readiness", lambda: checks.append("db+kb"))
+    http_api.check_production_dependencies()
+    assert checks == ["db+kb"]
+    assert http_api.readiness_status() == "ready"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param("database", id="database-unavailable"),
+        pytest.param("knowledge-base", id="policy-kb-missing"),
+    ],
+)
+def test_unavailable_production_dependency_returns_503_but_health_stays_live(monkeypatch, failure):
+    import psycopg
+    from fastapi.testclient import TestClient
+
+    from support_agent import http_api
+    from support_agent.db import DatabaseSchemaError
+    from support_agent.server import app
+
+    _configure_production(monkeypatch)
+    monkeypatch.setattr(http_api, "get_redactor", lambda: SimpleNamespace(_presidio=True))
+    check_started = threading.Event()
+
+    def unavailable():
+        check_started.set()
+        if failure == "database":
+            raise psycopg.OperationalError("mock database unavailable")
+        raise DatabaseSchemaError("Approved policy knowledge base is empty.")
+
+    monkeypatch.setattr(http_api, "check_production_readiness", unavailable)
+    with TestClient(app) as client:
+        assert check_started.wait(timeout=2)
+        deadline = time.monotonic() + 2
+        while http_api.readiness_status() == "starting" and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert http_api.readiness_status() == "unavailable"
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/readyz").status_code == 503
+        assert client.post("/api/session").status_code == 503
+
+
+def test_customer_chat_returns_503_when_groq_safety_is_unavailable(monkeypatch):
+    import httpx
+    from fastapi.testclient import TestClient
+
+    from support_agent.guardrails import safety
+    from support_agent.server import app
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("PERSISTENCE_ENABLED", "0")
+    monkeypatch.setenv("SAFETY_PROVIDER", "groq")
+    monkeypatch.setenv("GROQ_API_KEY", "mock-groq-key")
+    get_settings.cache_clear()
+    safety._CLASSIFIER = None
+    calls = []
+
+    def unavailable(*args, **kwargs):
+        calls.append(True)
+        raise httpx.ConnectError("mock provider outage")
+
+    monkeypatch.setattr(safety.httpx, "post", unavailable)
+    with TestClient(app) as client:
+        response = client.post("/chat", json={"conversation_id": "safety-test", "message": "Hello"})
+    assert response.status_code == 503
+    assert "safety check" in response.json()["detail"].lower()
+    assert calls == [True]
 
 
 def test_cross_origin_requests_are_rejected():

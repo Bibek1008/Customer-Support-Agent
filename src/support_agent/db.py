@@ -141,6 +141,42 @@ def check_database() -> None:
             )
 
 
+def check_production_readiness() -> None:
+    """Validate support schema and compatible policy vectors in one DB round trip."""
+    from support_agent.config import get_settings
+
+    settings = get_settings()
+    with get_pool().connection() as conn:
+        row = conn.execute(
+            """
+            WITH startup_limits AS MATERIALIZED (
+                SELECT set_config('statement_timeout', '15000ms', TRUE),
+                       set_config('lock_timeout', '3000ms', TRUE)
+            )
+            SELECT
+                (SELECT max(version) FROM support_schema_versions),
+                (SELECT format_type(atttypid, atttypmod)
+                   FROM pg_attribute
+                  WHERE attrelid = to_regclass('public.kb_chunks')
+                    AND attname = 'embedding' AND NOT attisdropped),
+                (SELECT count(*) FROM public.kb_chunks
+                  WHERE active = TRUE
+                    AND metadata->>'embedding_model' = %s
+                    AND metadata->>'embedding_provider' = %s
+                    AND COALESCE(metadata->>'profile', '') IN ('', 'office_store'))
+            FROM startup_limits
+            """,
+            (settings.embedding_model, settings.embedding_provider),
+        ).fetchone()
+    version, embedding_type, policy_count = row
+    if version is None or version < SCHEMA_VERSION:
+        raise DatabaseSchemaError("Database schema is not current; run python -m support_agent.db")
+    if embedding_type != f"vector({settings.embedding_dim})":
+        raise DatabaseSchemaError("Knowledge embedding dimension does not match configuration.")
+    if policy_count < 1:
+        raise DatabaseSchemaError("Approved policy knowledge base is empty.")
+
+
 def close_pool() -> None:
     if get_pool.cache_info().currsize:
         get_pool().close()

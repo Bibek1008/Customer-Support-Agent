@@ -8,6 +8,7 @@ import hmac
 import logging
 import re
 import secrets
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from support_agent.config import get_settings
-from support_agent.db import DatabaseSchemaError, check_database
+from support_agent.db import DatabaseSchemaError, check_database, check_production_readiness
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.audit import capture_events
 from support_agent.repository import (
@@ -44,30 +45,76 @@ LOGGER = logging.getLogger(__name__)
 WEB = Path(__file__).resolve().parents[2] / "website"
 COOKIE = "support_session"
 router = APIRouter()
+_READINESS_LOCK = threading.Lock()
+_READINESS = {"status": "starting", "failure": None}
 
 
-def startup():
+def _set_readiness(status: str, failure: str | None = None) -> None:
+    with _READINESS_LOCK:
+        _READINESS.update(status=status, failure=failure)
+
+
+def readiness_status() -> str:
+    with _READINESS_LOCK:
+        return _READINESS["status"]
+
+
+def _timed_startup(name, operation):
+    started = time.perf_counter()
+    status = "ok"
+    try:
+        return operation()
+    except Exception:
+        status = "error"
+        raise
+    finally:
+        LOGGER.info(
+            "startup operation=%s elapsed_ms=%.1f status=%s",
+            name,
+            (time.perf_counter() - started) * 1000,
+            status,
+        )
+
+
+def check_production_dependencies() -> None:
+    """Run blocking readiness probes outside the server's bind path."""
+    started = time.perf_counter()
+    try:
+        redactor = _timed_startup("presidio_init", get_redactor)
+        if not redactor._presidio:
+            raise RuntimeError("Production requires a functioning Presidio installation.")
+        _timed_startup("database_and_policy_readiness", check_production_readiness)
+        _set_readiness("ready")
+        LOGGER.info(
+            "startup operation=production_readiness elapsed_ms=%.1f status=ready",
+            (time.perf_counter() - started) * 1000,
+        )
+    except Exception as error:
+        _set_readiness("unavailable", type(error).__name__)
+        LOGGER.info(
+            "startup operation=production_readiness elapsed_ms=%.1f status=unavailable",
+            (time.perf_counter() - started) * 1000,
+        )
+        raise
+
+
+def startup(*, defer_dependencies: bool = False):
     settings = get_settings()
-    settings.validate_production()
+    _set_readiness("starting")
+    _timed_startup("production_configuration", settings.validate_production)
     if settings.app_env == "production":
         from support_agent.agent.models import validate_credentials
 
-        validate_credentials()
-    if settings.persistence_enabled:
-        check_database()
+        _timed_startup("production_credentials", validate_credentials)
+    if settings.app_env == "production" and defer_dependencies:
+        return
     if settings.app_env == "production":
-        from support_agent.guardrails.safety import SafetyRole, get_classifier
-        from support_agent.kb.store import get_store
-
-        if not get_redactor()._presidio:
-            raise RuntimeError("Production requires a functioning Presidio installation.")
-        if not get_store()._use_db or not get_store().count():
-            raise RuntimeError("Production requires an ingested PostgreSQL knowledge base.")
-        verdict = get_classifier().classify("Hello", SafetyRole.USER)
-        if not verdict.checked or any(
-            c in verdict.categories for c in ("UNAVAILABLE", "INVALID_VERDICT")
-        ):
-            raise RuntimeError("Production safety classifier is unavailable.")
+        check_production_dependencies()
+    elif settings.persistence_enabled:
+        _timed_startup("database_schema_check", check_database)
+        _set_readiness("ready")
+    else:
+        _set_readiness("ready")
 
 
 def browser_page(name):
@@ -126,6 +173,8 @@ class BodyLimitMiddleware:
 def require_persistence():
     if not get_settings().persistence_enabled:
         raise HTTPException(503, "Persistent storage is not configured.")
+    if get_settings().app_env == "production" and readiness_status() != "ready":
+        raise HTTPException(503, "Required support services are not ready. Please retry shortly.")
 
 
 def require_owner(request: Request) -> str:
@@ -200,8 +249,8 @@ def conversation(conversation_id: UUID, owner: str = Depends(require_owner)):
 
 @router.get("/readyz")
 def readyz():
-    require_persistence()
-    check_database()
+    if not get_settings().persistence_enabled or readiness_status() != "ready":
+        raise HTTPException(503, "Required support services are not ready.")
     return {"status": "ready", "persistence": "postgresql"}
 
 
