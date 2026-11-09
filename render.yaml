@@ -3,7 +3,7 @@ services:
     name: customer-support-agent
     runtime: python
     plan: free
-    buildCommand: pip install --require-hashes -r requirements.lock && pip install -e ".[free]"
+    buildCommand: pip install --require-hashes -r requirements.lock && pip install -e ".[free,pii]" && python -m spacy download en_core_web_sm
     startCommand: uvicorn support_agent.server:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 4 --timeout-keep-alive 5 --no-access-log
     healthCheckPath: /healthz
     envVars:
@@ -22,7 +22,7 @@ services:
       - key: ALLOW_FIXTURE_ORDERS
         value: "0"
       - key: ANSWER_MODE
-        value: generated
+        value: extractive
       - key: LLM_PROVIDER
         value: groq
       - key: GROQ_API_KEY
