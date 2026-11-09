@@ -195,7 +195,13 @@ class Repository:
             )
 
     def fail_turn(
-        self, conversation_id: str, request_id: str, error_code: str, lease_token: str
+        self,
+        conversation_id: str,
+        request_id: str,
+        error_code: str,
+        lease_token: str,
+        *,
+        trace: dict | None = None,
     ) -> None:
         with connection() as conn:
             if not conn.execute(
@@ -204,8 +210,8 @@ class Repository:
             ).fetchone():
                 return
             conn.execute(
-                "UPDATE support_turns SET state='failed',error_code=%s,completed_at=now() WHERE request_id=%s AND state='processing'",
-                (error_code, request_id),
+                "UPDATE support_turns SET state='failed',error_code=%s,trace=COALESCE(%s,trace),completed_at=now() WHERE request_id=%s AND state='processing'",
+                (error_code, Jsonb(sanitize(trace)) if trace is not None else None, request_id),
             )
             conn.execute(
                 "UPDATE support_conversations SET lease_token=NULL,lease_until=NULL WHERE id=%s AND lease_token=%s",
@@ -235,6 +241,23 @@ class Repository:
                 ),
             )
             return Ticket.model_validate(cur.fetchone())
+
+    def existing_ticket(self, conversation_id: str, request_id: str | None = None) -> Ticket | None:
+        """Recover a committed write on retry, or reuse an active conversation ticket."""
+        with connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            if request_id is not None:
+                cur.execute(
+                    "SELECT * FROM support_tickets WHERE conversation_id=%s AND request_id=%s",
+                    (conversation_id, request_id),
+                )
+            else:
+                cur.execute(
+                    """SELECT * FROM support_tickets WHERE conversation_id=%s
+                    AND status IN ('open','escalated') ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (conversation_id,),
+                )
+            row = cur.fetchone()
+            return Ticket.model_validate(row) if row else None
 
     def ticket(self, ticket_id: str, conversation_id: str | None = None) -> Ticket | None:
         with connection() as conn, conn.cursor(row_factory=dict_row) as cur:

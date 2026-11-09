@@ -55,7 +55,8 @@ from support_agent.schemas import (
     Trace,
 )
 from support_agent.tools import handoff as handoff_tool
-from support_agent.tools.registry import TOOL_SCHEMAS, dispatch
+from support_agent.tools import ticketing
+from support_agent.tools.registry import TOOL_SCHEMAS, ToolOutcome, dispatch
 
 
 @trace_turn
@@ -79,6 +80,21 @@ def run_turn(
     ]
     trace.messages = [*prior, incoming]
 
+    # Every input must pass the dedicated safety gate before intent routing,
+    # including canned replies and semantic UNSAFE refusals. Do not duplicate it.
+    gate = refusal.check_input(redacted.text)
+    if gate.refuse:
+        trace.decision = _refusal_decision(gate.message, settings.handoff_threshold)
+        trace.messages.append(Message(role=Role.ASSISTANT, content=gate.message))
+        return trace
+
+    # A ticket may have committed before a previous worker failed to persist its
+    # response. Recover the authoritative result instead of repeating the write.
+    recovered = ticketing.existing_ticket(conversation_id, request_only=True)
+    if recovered is not None:
+        trace.decision = _ticket_confirmation(trace, recovered.id, reused=True)
+        return trace
+
     intent = classify_intent(redacted.text, prior)
     if intent._cost_record is not None:
         trace.spans.append(
@@ -98,6 +114,14 @@ def run_turn(
             attributes={"category": intent.intent.value},
         )
     )
+    if intent.intent in (Intent.HUMAN, Intent.TICKET, Intent.HANDOFF_FOLLOWUP):
+        saved = ticketing.existing_ticket(conversation_id, existing_handoff(prior))
+        if saved is not None:
+            trace.decision = _ticket_confirmation(
+                trace, saved.id, reused=True, phone_requested=intent.phone_requested
+            )
+            return trace
+
     conversation_reply = conversational_reply(intent, prior)
     if conversation_reply is not None:
         trace.decision = Decision(
@@ -109,46 +133,25 @@ def run_turn(
         trace.messages.append(Message(role=Role.ASSISTANT, content=conversation_reply))
         return trace
 
-    # 2. Input guardrail: disallowed or out of scope -> refuse without a loop.
-    gate = refusal.check_input(redacted.text)
-    if gate.refuse:
-        trace.decision = _refusal_decision(gate.message, settings.handoff_threshold)
-        trace.messages.append(Message(role=Role.ASSISTANT, content=gate.message))
-        return trace
-
     if intent.intent == Intent.HUMAN:
-        reference = existing_handoff(prior)
         prefix = (
             "I don't have a verified support phone number to share. "
             if intent.phone_requested
             else ""
         )
-        if reference:
-            text = (
-                prefix
-                + f"Your existing request is saved for staff review. Your reference is {reference}. You can check this chat for a reply; a response time isn't guaranteed."
-            )
-            trace.decision = Decision(
-                type=DecisionType.ANSWER,
-                answer=text,
-                confidence=1.0,
-                threshold=settings.handoff_threshold,
-            )
-            trace.messages.append(Message(role=Role.ASSISTANT, content=text))
-        else:
-            trace.decision = _handoff(
-                trace,
-                "Customer requested a human agent.",
-                0.0,
-                settings.handoff_threshold,
-                customer_id,
-            )
-            text = (
-                prefix
-                + f"I've saved your request to speak with staff. Your reference is {trace.decision.ticket_id}. You can check this chat for a staff reply; a response time isn't guaranteed."
-            )
-            trace.decision.answer = text
-            trace.messages[-1].content = text
+        trace.decision = _handoff(
+            trace,
+            "Customer requested a human agent.",
+            0.0,
+            settings.handoff_threshold,
+            customer_id,
+        )
+        text = (
+            prefix
+            + f"I've saved your request to speak with staff. Your reference is {trace.decision.ticket_id}. You can check this chat for a staff reply; a response time isn't guaranteed."
+        )
+        trace.decision.answer = text
+        trace.messages[-1].content = text
         return trace
 
     if settings.pricing_requires_review and intent.intent == Intent.PRICING:
@@ -238,7 +241,11 @@ def run_turn(
         # Run each tool call; return all results in one user message.
         tool_results = []
         for block in tool_uses:
-            outcome = _run_tool(block, trace)
+            outcome = _run_tool(block, trace, allow_ticket_creation=intent.intent == Intent.TICKET)
+            if trace.created_ticket_id is not None:
+                # The database result, not a later model draft/confidence score,
+                # determines the confirmation. Stop all remaining tool calls.
+                break
             if outcome.is_handoff:
                 handoff_reason = outcome.handoff_reason
             citations.extend(_redact_citations(outcome.citations))
@@ -254,13 +261,13 @@ def run_turn(
             )
         messages.append({"role": "user", "content": tool_results})
 
-        if handoff_reason is not None:
+        if handoff_reason is not None or trace.created_ticket_id is not None:
             break
 
     # Some compatible models answer without invoking the read-only KB tool.
     # Retry retrieval deterministically before abstaining; only return a source
     # excerpt when the normal retrieval filters produce a relevant citation.
-    if handoff_reason is None and not citations:
+    if handoff_reason is None and not citations and trace.created_ticket_id is None:
         outcome = _run_tool(
             SimpleNamespace(name="knowledge_base", input={"query": redacted.text, "k": 4}),
             trace,
@@ -282,16 +289,34 @@ def run_turn(
     return trace
 
 
-def _run_tool(block, trace: Trace):
+def _run_tool(block, trace: Trace, *, allow_ticket_creation: bool = False):
     """Dispatch one tool call, recording a span."""
     tool_input = block.input if isinstance(block.input, dict) else json.loads(block.input)
     with tool_span(block.name, input=tool_input) as span:
-        outcome = dispatch(block.name, tool_input)
+        if block.name == "create_ticket":
+            with guardrail_span("ticket_authorization") as authorization:
+                authorization.set("ticket.creation_allowed", allow_ticket_creation)
+            if not allow_ticket_creation:
+                outcome = ToolOutcome(
+                    text="Ticket creation was not authorized by the customer. Answer from approved sources or acknowledge missing information; do not claim a ticket was created."
+                )
+            elif trace.created_ticket_id is not None:
+                outcome = ToolOutcome(
+                    text="The requested ticket is already saved.",
+                    ticket_id=trace.created_ticket_id,
+                )
+            else:
+                outcome = dispatch(block.name, tool_input)
+                if outcome.ticket_id:
+                    trace.created_ticket_id = outcome.ticket_id
+        else:
+            outcome = dispatch(block.name, tool_input)
         span.update(
             output={
                 "text": outcome.text,
                 "citations": [c.model_dump() for c in outcome.citations],
                 "handoff": outcome.is_handoff,
+                "ticket_id": outcome.ticket_id,
             }
         )
         span.set("gen_ai.tool.citations", len(outcome.citations))
@@ -329,6 +354,8 @@ def _finalize(
     customer_id: str | None,
 ) -> Decision:
     settings = get_settings()
+    if trace.created_ticket_id is not None:
+        return _ticket_confirmation(trace, trace.created_ticket_id, reused=False)
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
 
     # A missing answer or evidence is not permission to open a staff ticket.
@@ -431,6 +458,9 @@ def _handoff(
     threshold: float,
     customer_id: str | None,
 ) -> Decision:
+    saved = ticketing.existing_ticket(trace.conversation_id, existing_handoff(trace.messages))
+    if saved is not None:
+        return _ticket_confirmation(trace, saved.id, reused=True)
     with tool_span("escalate_to_human", input={"reason": reason, "confidence": confidence}) as span:
         result = handoff_tool.escalate_to_human(
             reason=reason,
@@ -439,8 +469,16 @@ def _handoff(
             customer_id=customer_id,
         )
         span.update(output={"ticket_id": result.ticket_id, "message": result.text})
+        trace.created_ticket_id = result.ticket_id
     trace.messages.append(Message(role=Role.ASSISTANT, content=result.text))
-    trace.spans.append(SpanRecord(name="handoff", kind="tool", attributes={"reason": reason}))
+    trace.spans.append(
+        SpanRecord(
+            name="handoff",
+            kind="tool",
+            attributes={"reason": reason, "ticket_id": result.ticket_id},
+        )
+    )
+    _record_ticket_state(trace, result.ticket_id, "created")
     return Decision(
         type=DecisionType.HANDOFF,
         answer=result.text,
@@ -448,6 +486,47 @@ def _handoff(
         threshold=threshold,
         handoff_reason=reason,
         ticket_id=result.ticket_id,
+    )
+
+
+def _record_ticket_state(trace: Trace, ticket_id: str, action: str) -> None:
+    with guardrail_span("ticket_state") as span:
+        span.set("ticket.id", ticket_id)
+        span.set("ticket.action", action)
+    trace.spans.append(
+        SpanRecord(
+            name="ticket_state",
+            kind="guardrail",
+            attributes={"ticket_id": ticket_id, "action": action},
+        )
+    )
+
+
+def _ticket_confirmation(
+    trace: Trace, ticket_id: str, *, reused: bool, phone_requested: bool = False
+) -> Decision:
+    """Build customer metadata from a verified write/read result, never model text."""
+    prefix = "I don't have a verified support phone number to share. " if phone_requested else ""
+    text = (
+        prefix
+        + (
+            "Your existing request is saved for staff review. "
+            if reused
+            else "I've saved your request for staff review. "
+        )
+        + f"Your reference is {ticket_id}. You can check this chat for a staff reply; I can't guarantee a response time."
+    )
+    trace.messages.append(Message(role=Role.ASSISTANT, content=text))
+    _record_ticket_state(trace, ticket_id, "reused" if reused else "created")
+    return Decision(
+        type=DecisionType.HANDOFF,
+        answer=text,
+        confidence=0.0,
+        threshold=get_settings().handoff_threshold,
+        handoff_reason="Existing support ticket reused."
+        if reused
+        else "Customer requested a support ticket.",
+        ticket_id=ticket_id,
     )
 
 

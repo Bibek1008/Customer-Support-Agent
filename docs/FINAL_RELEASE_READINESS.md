@@ -10,6 +10,38 @@ Olist routes, transaction tools, account mapping, Olist UI, and Olist source mod
 
 ## Verification
 
+### Second-stage independent review (2026-11-09)
+
+**Readiness blocked by isolated PostgreSQL infrastructure; not cleared for controlled staging.** Reviewed the actual diff and reproduced/fixed missing-context ticket access, malformed server safety responses, and incorrect unconfigured-production checked state. Hardened integration target validation before migrations. Final local suite: **249 passed, 0 failed, 3 skipped**; separate integration-enabled attempt: **0 passed, 3 setup errors, 0 skipped**. Windows application-control policy blocks the portable PostgreSQL initializer/controller, so real database ownership, lease/concurrent-retry and persistence coverage is not established. Ruff, formatting (87 Python files), compilation and diff checks pass. Langfuse checks cover local SDK exporters, including explicit failure; hosted receipt was not verified. Production Neon, `.env`, Render and user edits remain untouched; no commit/push/deploy occurred. See [SECOND_STAGE_REVIEW.md](SECOND_STAGE_REVIEW.md) for scenarios A–E, file rationale, exact blocker and safe integration commands.
+
+### Production guardrail and ticket workflow corrections (2026-11-09, local only)
+
+- Verified against the current code and the supplied November 9 activity exports: canned social/off-topic/unsafe responses returned before `refusal.check_input`; successful `create_ticket` results were not carried into finalization; repeated human requests used a textual reference and returned answer/null-ticket metadata. The specific `tkt_0164680e677f` creation sequence described in the request was reproduced with isolated tests, not independently fetched from production.
+- Every uncached agent turn now runs the dedicated input safety gate after PII redaction and before intent classification, ticket recovery, or any early return. Unsafe inputs do not reach routing, generation, or ticket writes. Configured safety providers fail closed on unavailable, malformed, invalid, or unchecked verdicts. The existing unconfigured local-development classifier behavior is unchanged; production validation still requires a provider. Grounded/generated policy answers retain the output safety gate. Fixed refusals and ticket confirmations are application templates, so traces do not invent output-classifier calls for them.
+- A validated `ticket` intent represents an explicit request to open a ticket or receive staff follow-up. Only that intent authorizes the reasoner's `create_ticket` call. Existing human-request, pricing-review, and account-recovery escalation routes remain; insufficient evidence or low confidence alone never authorizes a write.
+- Successful tool writes immediately set `Trace.created_ticket_id`, stop further model/tool execution, and yield a confirmation and handoff metadata based on the authoritative ticket ID. Finalization cannot replace a committed ticket with a knowledge abstention. Escalations save their initial escalated status in the creation write.
+- Repeated human/ticket/follow-up requests verify and reuse an active ticket in the authenticated conversation, with handoff=true, decision=handoff, and the same ticket ID. Resolved or deleted historical references are not treated as proof of an active request. A ticket already committed for the same request ID is recovered after a failed turn even if it has since been resolved. The existing request replay and database request-ID uniqueness protections remain.
+- Traces and persisted activity include input-safety/refusal results, ticket-creation authorization, actual ticket results, created/reused state, and final handoff/ticket metadata. Guardrail failures retain only error types. Presidio and masking remain enabled. Canonical request/conversation UUID fields survive numeric PII false positives while configured secrets and ordinary PII remain masked.
+- Full suite: **218 passed, 3 skipped** in 17.68 seconds. Added 31 workflow regression cases and two tracing/privacy tests; existing structured-intent tests also cover the new explicit-ticket label. The skips are the three opt-in PostgreSQL integration tests: durable session/isolation/replay/history/staff-reply persistence; conversation leases/stale completion; and database rate-limit/evaluation persistence. No isolated PostgreSQL instance was enabled. New HTTP workflow tests use isolated fake repositories; local tracing tests inspect the real Langfuse SDK with an in-memory exporter. They do not independently verify deployed providers, Neon transactions, or hosted trace delivery.
+- Ruff, formatting (85 Python files), Python compilation, and `git diff --check` passed. No model/embedding changes, ingestion, migrations, production Neon writes, hosted inference, deployment, commit, or push were performed. `.env` was untouched and remains ignored/untracked. A separate user edit to the opening sentence of `docs/ARCHITECTURE.md` was preserved.
+
+Files changed for this correction:
+
+| Files | Purpose |
+| --- | --- |
+| `src/support_agent/agent/loop.py` | Put input safety first, authorize ticket creation, retain committed ticket IDs, and return consistent verified handoff outcomes. |
+| `src/support_agent/agent/prompts.py`, `src/support_agent/guardrails/conversation.py` | Distinguish explicit ticket requests from policy questions; remove unverified-reference confirmations. |
+| `src/support_agent/guardrails/refusal.py`, `src/support_agent/guardrails/safety.py` | Reject unchecked configured-provider verdicts and record actual verdict/error state. |
+| `src/support_agent/tools/registry.py`, `src/support_agent/tools/ticketing.py`, `src/support_agent/tools/handoff.py` | Return authoritative ticket outcomes, redact write contents, retrieve authenticated existing tickets, and create escalations in one write. |
+| `src/support_agent/schemas.py` | Track a successful ticket write independently of later answer finalization. |
+| `src/support_agent/http_api.py`, `src/support_agent/repository.py` | Persist redacted guardrail audit data on failed turns; support conversation-scoped ticket reuse and request-level recovery. |
+| `src/support_agent/observability/tracing.py` | Export ticket/handoff metadata, record failed guardrail checks, and avoid masking validated UUID identifiers while retaining secret/PII masking. |
+| `tests/test_workflow_regressions.py` | New isolated HTTP, guardrail-ordering, failure, ticket-confirmation, privacy, replay, and recovery regressions. |
+| `tests/test_tracing.py` | Verify real SDK in-memory exports for ticket creation/reuse and identifier/secret masking. |
+| `tests/test_conversation_guardrail.py`, `tests/test_production_controls.py` | Update previous buggy metadata expectations and provide real isolated ticket records for reuse checks. |
+| `tests/test_gemini_fallback.py` | Preserve the completed-write/no-replay fallback test with a status-update operation; creation now ends with an authoritative confirmation. |
+| `docs/FINAL_RELEASE_READINESS.md` | Record local findings, behavior, validation, and remaining verification limits. |
+
 - Complete test suite after the return-policy fallback, migration-startup, and Render PII-model fixes: **180 passed, 3 skipped**. The three skips are the PostgreSQL integration tests, which require an explicitly enabled integration database. Hosted safety and tracing were disabled for the test run; no model inference ran.
 - Ruff lint: clean across `eval`, `src`, `tests`, and `ops`.
 - Ruff formatter: all 84 Python files in those directories pass. Only the 11 files reported by the requested formatter check were reformatted.

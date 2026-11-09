@@ -17,17 +17,47 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def database(monkeypatch):
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+
     from support_agent.config import get_settings
     from support_agent.db import close_pool, migrate
+    from tests.database_safety import test_database_parameters
 
+    # Never let opting in fall back to DATABASE_URL or a developer's .env.
+    url = os.environ.get("SUPPORT_TEST_DATABASE_URL", "")
+    try:
+        target = test_database_parameters(url)
+    except ValueError as error:
+        pytest.fail(str(error), pytrace=False)
+    verified_url = make_conninfo(**target)
+    try:
+        with psycopg.connect(verified_url, connect_timeout=5) as conn:
+            actual = conn.execute(
+                "SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port()"
+            ).fetchone()
+            if actual != (target["dbname"], target["user"], target["host"], int(target["port"])):
+                pytest.fail(
+                    "Isolated test database identity did not match the explicit target",
+                    pytrace=False,
+                )
+    except psycopg.Error as error:
+        pytest.fail(
+            f"Isolated PostgreSQL unavailable ({type(error).__name__}); no migrations executed",
+            pytrace=False,
+        )
+
+    monkeypatch.setenv("DATABASE_URL", verified_url)
     monkeypatch.setenv("PERSISTENCE_ENABLED", "1")
     monkeypatch.setenv("ADMIN_API_KEY", "integration-staff-secret-with-at-least-32-characters")
     monkeypatch.setenv("SERVICE_API_KEY", "integration-service-secret-with-at-least-32-characters")
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1000")
     get_settings.cache_clear()
-    migrate()
-    yield
-    close_pool()
+    try:
+        migrate()
+        yield
+    finally:
+        close_pool()
 
 
 def test_durable_chat_isolation_replay_history_and_staff_reply(database, monkeypatch):

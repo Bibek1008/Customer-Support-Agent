@@ -124,6 +124,7 @@ class Trace(BaseModel):
     messages: list[Message] = Field(default_factory=list)
     spans: list[SpanRecord] = Field(default_factory=list)
     decision: Decision | None = None
+    created_ticket_id: str | None = None
     total_cost: CostRecord | None = None
     created_at: datetime = Field(default_factory=_now)
 

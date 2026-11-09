@@ -8,6 +8,7 @@ from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from functools import lru_cache, wraps
 from inspect import signature
+from uuid import UUID
 
 from support_agent.config import get_settings
 from support_agent.schemas import CostRecord
@@ -85,7 +86,7 @@ def sanitize(value):
             str(key): (
                 "<OPAQUE_SIGNATURE>"
                 if key in {"thought_signature", "thoughtSignature"}
-                else sanitize(item)
+                else _sanitize_field(key, item)
             )
             for key, item in value.items()
         }
@@ -96,6 +97,22 @@ def sanitize(value):
     if hasattr(value, "__dict__"):
         return sanitize(vars(value))
     return value
+
+
+def _sanitize_field(key, value):
+    masked = sanitize(value)
+    # Validated API identifiers can look like card numbers to regex masking.
+    # Preserve only canonical UUID identifier fields, never arbitrary text or
+    # configured secrets, so persisted responses and request replay agree.
+    if key in {"request_id", "conversation_id"} and isinstance(value, str):
+        try:
+            canonical = str(UUID(value))
+        except ValueError:
+            pass
+        else:
+            if canonical == value.lower() and "<SECRET>" not in masked:
+                return value
+    return masked
 
 
 def mask_otel_spans(*, params):
@@ -248,6 +265,9 @@ def trace_turn(function):
                             "confidence": d.confidence,
                             "threshold": d.threshold,
                             "handoff_reason": d.handoff_reason,
+                            "handoff": d.type.value == "handoff",
+                            "ticket_id": d.ticket_id,
+                            "created_ticket_id": result.created_ticket_id,
                             "source_ids": [c.source_id for c in d.citations],
                             "pii_checks": summary["checks"],
                             "pii_entity_types": sorted(summary["entities"]),
@@ -316,14 +336,19 @@ def guardrail_span(check: str):
     )
     with context as span:
         span.set("guardrail.check", check)
-        yield span
-        span.update(output=span._metadata)
-        from support_agent.observability.audit import record_guardrail
+        try:
+            yield span
+        except Exception as error:
+            span.set("guardrail.error", type(error).__name__)
+            raise
+        finally:
+            span.update(output=span._metadata)
+            from support_agent.observability.audit import record_guardrail
 
-        record_guardrail(check, span._metadata)
-        if summary is not None:
-            entities = span._metadata.get("guardrail.pii.entities", "")
-            summary["entities"].update(filter(None, entities.split(",")))
+            record_guardrail(check, span._metadata)
+            if summary is not None:
+                entities = span._metadata.get("guardrail.pii.entities", "")
+                summary["entities"].update(filter(None, entities.split(",")))
 
 
 class _Span:

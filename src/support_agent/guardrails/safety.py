@@ -17,6 +17,7 @@ checks cannot silently pass in production. Hosted quota failures are retryable.
 from __future__ import annotations
 
 import json
+import re
 import time
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -108,12 +109,12 @@ class SafetyClassifier:
                 return SafetyVerdict(
                     safe=self.settings.app_env != "production",
                     categories=["UNCONFIGURED"],
-                    checked=self.settings.app_env == "production",
+                    checked=False,
                 )
             verdict = self._call_server(text, role)
             span.set("guardrail.safety.safe", verdict.safe)
             span.set("guardrail.safety.categories", ",".join(verdict.categories))
-            span.set("guardrail.safety.checked", True)
+            span.set("guardrail.safety.checked", verdict.checked)
             span.set("guardrail.safety.cost_usd", verdict.cost_usd)
             span.set("guardrail.safety.provider", verdict.provider or self.settings.safety_provider)
             if verdict.fallback_from:
@@ -303,15 +304,20 @@ class SafetyClassifier:
     @staticmethod
     def _parse(content: str) -> SafetyVerdict:
         """Llama Guard replies with 'safe' or 'unsafe\\nS1,S3' style output."""
+        invalid = SafetyVerdict(safe=False, categories=["INVALID_VERDICT"], checked=True)
+        if not isinstance(content, str):
+            return invalid
         lines = [ln.strip() for ln in content.strip().splitlines() if ln.strip()]
         if not lines:
             return SafetyVerdict(safe=False, categories=["INVALID_VERDICT"], checked=True)
         first = lines[0].lower()
         if first == "safe" and len(lines) == 1:
             return SafetyVerdict(safe=True, categories=[], checked=True)
-        categories: list[str] = []
-        if len(lines) > 1:
-            categories = [c.strip() for c in lines[1].replace(" ", "").split(",") if c.strip()]
+        if first != "unsafe" or len(lines) != 2:
+            return invalid
+        categories = [c.strip() for c in lines[1].split(",")]
+        if not categories or any(re.fullmatch(r"S[1-9][0-9]*", c) is None for c in categories):
+            return invalid
         return SafetyVerdict(safe=False, categories=categories, checked=True)
 
 

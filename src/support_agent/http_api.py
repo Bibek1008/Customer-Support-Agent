@@ -282,6 +282,8 @@ def durable_chat(req, request, run_turn):
     context = current_request.set(
         RequestContext(req.conversation_id, request_id, owner, time.monotonic() + 180)
     )
+    trace = None
+    events = []
     try:
         history = [
             Message(role="assistant" if m["role"] == "staff" else m["role"], content=m["content"])
@@ -323,7 +325,15 @@ def durable_chat(req, request, run_turn):
         return result
     except Exception as error:
         try:
-            repo.fail_turn(req.conversation_id, request_id, type(error).__name__, lease_token)
+            failed_trace = trace.model_dump(mode="json") if trace is not None else {}
+            failed_trace["guardrails"] = events
+            repo.fail_turn(
+                req.conversation_id,
+                request_id,
+                type(error).__name__,
+                lease_token,
+                trace=failed_trace,
+            )
         except (psycopg.Error, PoolTimeout):
             LOGGER.error("Could not record failed turn")
         raise

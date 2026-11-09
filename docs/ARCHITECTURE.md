@@ -1,6 +1,6 @@
 # Application architecture
 
-This repository is the Demo Office Store customer-support application. It answers questions from the five approved Markdown documents in `knowledge_base/approved/`, keeps browser conversations in PostgreSQL, and offers authenticated staff review.
+This repository is the pre-Olist Demo Office Store customer-support application. It answers questions from the five approved Markdown documents in `knowledge_base/approved/`, keeps browser conversations in PostgreSQL, and offers authenticated staff review.
 
 ```mermaid
 flowchart LR

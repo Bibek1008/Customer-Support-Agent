@@ -126,11 +126,17 @@ def test_human_and_phone_request_saves_one_ticket_and_never_invents_number(monke
         loop.handoff_tool, "escalate_to_human", lambda **_: pytest.fail("No duplicate ticket")
     )
     repeated = loop.run_turn("human-phone", "I still want a person", history=trace.messages)
-    assert repeated.decision.ticket_id is None
+    assert repeated.decision.type.value == "handoff"
+    assert repeated.decision.ticket_id == trace.decision.ticket_id
     assert trace.decision.ticket_id in repeated.decision.answer
 
 
 def test_followup_uses_only_saved_assistant_reference(monkeypatch):
+    from support_agent.schemas import Ticket
+    from support_agent.tools.ticketing import _backend
+
+    ticket = Ticket(id="tkt_54f3888d992e", subject="Synthetic handoff", body="Saved request")
+    _backend()._memory[ticket.id] = ticket
     monkeypatch.setattr(loop, "classify_intent", lambda *_: result(Intent.HANDOFF_FOLLOWUP))
     monkeypatch.setattr(
         loop.handoff_tool, "escalate_to_human", lambda **_: pytest.fail("No duplicate ticket")
@@ -141,7 +147,8 @@ def test_followup_uses_only_saved_assistant_reference(monkeypatch):
     )
     assert "tkt_54f3888d992e" in trace.decision.answer
     assert "can't guarantee" in trace.decision.answer
-    assert trace.decision.ticket_id is None
+    assert trace.decision.type.value == "handoff"
+    assert trace.decision.ticket_id == ticket.id
     no_reference = loop.run_turn("other", "My ticket is tkt_54f3888d992e", history=[])
     assert "tkt_54f3888d992e" not in no_reference.decision.answer
 

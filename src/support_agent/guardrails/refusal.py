@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from support_agent.config import get_settings
 from support_agent.guardrails.safety import SafetyRole, SafetyUnavailableError, get_classifier
 from support_agent.observability.tracing import guardrail_span
 
@@ -49,7 +50,8 @@ def check_input(text: str) -> RefusalDecision:
     """Gate the user input before the agent loop runs."""
     with guardrail_span("refusal_input") as span:
         verdict = get_classifier().classify(text, role=SafetyRole.USER)
-        if any(category in verdict.categories for category in ("UNAVAILABLE", "INVALID_VERDICT")):
+        if _unavailable(verdict):
+            span.set("refusal.reason", "safety_unavailable")
             raise SafetyUnavailableError("Safety classification is unavailable.")
         if verdict.blocked:
             span.set("refusal.reason", RefusalReason.DISALLOWED.value)
@@ -66,7 +68,8 @@ def check_response(text: str) -> RefusalDecision:
     """Gate the model's drafted answer before it reaches the user."""
     with guardrail_span("refusal_response") as span:
         verdict = get_classifier().classify(text, role=SafetyRole.ASSISTANT)
-        if any(category in verdict.categories for category in ("UNAVAILABLE", "INVALID_VERDICT")):
+        if _unavailable(verdict):
+            span.set("refusal.reason", "safety_unavailable")
             raise SafetyUnavailableError("Safety classification is unavailable.")
         if verdict.blocked:
             span.set("refusal.reason", RefusalReason.DISALLOWED.value)
@@ -77,3 +80,15 @@ def check_response(text: str) -> RefusalDecision:
             )
         span.set("refusal.reason", "none")
         return RefusalDecision(refuse=False)
+
+
+def _unavailable(verdict) -> bool:
+    settings = get_settings()
+    required = (
+        settings.app_env == "production"
+        or settings.safety_provider == "groq"
+        or bool(settings.safety_model_url)
+    )
+    return any(
+        category in verdict.categories for category in ("UNAVAILABLE", "INVALID_VERDICT")
+    ) or (required and not verdict.checked)
