@@ -1,7 +1,8 @@
 # Olist historical support architecture
 
 Updated 2026-11-09. Target: Render Native Python, Neon PostgreSQL/pgvector,
-Groq generation/safety, FastEmbed and optional redacted Langfuse tracing.
+Groq generation/safety, FastEmbed and redacted Langfuse tracing. Tracing is
+enabled at 100% sampling up to the configured monthly application cap.
 
 ```mermaid
 flowchart TB
@@ -14,7 +15,7 @@ flowchart TB
   Route --> Social[Whole-message greetings and thanks: static replies, no inference]
   Route --> Safety[Groq input safety for substantive requests]
   Safety --> Agent[Groq tool loop]
-  Agent --> SQL[15 fixed parameterized read-only tools]
+  Agent --> SQL[19 fixed parameterized read-only tools]
   SQL --> DB[(olist_demo transactions and curated aliases)]
   Agent --> Law[consumer_policy: brazil_consumer_law only]
   Agent --> Docs[knowledge_base: Olist document profiles only]
@@ -28,7 +29,7 @@ flowchart TB
   Agent --> Review[Qualified individual-case or requested staff review]
   Review --> Inbox[(Authenticated demo staff inbox)]
   API --> History[(Application conversations and messages)]
-  Agent -. sampled and redacted .-> LF[Langfuse]
+  Agent -. redacted traces .-> LF[Langfuse observability]
 ```
 
 ## Data boundaries

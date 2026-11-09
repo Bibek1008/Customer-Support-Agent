@@ -33,7 +33,7 @@ See [implementation and approval runbook](docs/OLIST_IMPLEMENTATION.md),
 [storage preflight](docs/DATABASE_STORAGE_PREFLIGHT.md), and
 [current release readiness](docs/FINAL_RELEASE_READINESS.md).
 
-A FastAPI support assistant with durable PostgreSQL conversations, a staff inbox, tool calls, evidence-checked RAG, PII redaction, prompt-injection defenses, safety checks, evaluations and optional Langfuse tracing. Office Store and Olist conversations are isolated. Olist retrieval separates dataset documentation, general Brazilian law and labeled demo procedures; transactions and feedback stay in relational tables. Fictional Office Store policies remain in their own profile.
+A FastAPI support assistant with durable PostgreSQL conversations, a staff inbox, tool calls, evidence-checked RAG, PII redaction, prompt-injection defenses, safety checks, evaluations and Langfuse observability. Tracing is enabled with full sampling up to the configurable monthly trace cap; captured fields are redacted before export. Office Store and Olist conversations are isolated. Olist retrieval separates dataset documentation, general Brazilian law and labeled demo procedures; transactions and feedback stay in relational tables. Fictional Office Store policies remain in their own profile.
 
 The Olist Brazilian E-Commerce Public Dataset is historical marketplace data released on Kaggle for roughly 2016–2018. It contains transactional records and post-purchase reviews, **not customer-support chat transcripts or customer-agent conversations**. This project is an independent, non-live demonstration and is not affiliated with Olist. The Kaggle page lists **CC BY-NC-SA 4.0**; attribution, non-commercial use and share-alike terms apply. Review the [dataset source and current terms](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce) before reuse. Do not present the demo as live order support.
 
@@ -44,10 +44,10 @@ The Olist Brazilian E-Commerce Public Dataset is historical marketplace data rel
 - Groq GPT-OSS generation and Groq GPT-OSS Safeguard checks, configured for quota-based use. Limits are account-specific; the app does not promise unlimited free usage.
 - PII redaction using Presidio pattern recognizers without loading a large spaCy NER model; injection quarantine; fail-closed safety behavior.
 - pgvector RAG with relevance and evidence checks. Missing evidence produces an honest unavailable answer.
-- Olist version-3 relational import and fixed SQL tools are prepared locally for all nine validated CSVs. The explicit importer maps every source field, keeps review comments in separate restricted storage, and preserves raw geolocation rows plus a deduplicated ZIP-prefix aggregate. The files remain ignored under `data/raw/olist/`; no Olist records have been imported into Neon.
+- The approved Olist version-3 import is complete in Neon for all nine validated CSVs. The importer maps every source field, keeps review comments in separate restricted storage, and preserves raw geolocation rows plus a deduplicated ZIP-prefix aggregate. Local source files remain ignored under `data/raw/olist/`.
 - Approved support knowledge and policies are stored as a separate pgvector RAG source. Olist transactions and reviews are never ingested into that policy knowledge base.
 - PostgreSQL `support_conversations` and `support_messages` store conversations created by users in this application. These are application chat history, not Olist historical records. No historical customer-agent conversations are fabricated.
-- Langfuse direct tracing is optional. Sampling and an application-side monthly trace cap are configurable. Check actual units in its dashboard.
+- Langfuse direct tracing is enabled for every eligible request until the application-side monthly trace cap is reached. Check actual usage units in the Langfuse dashboard.
 - Separate evaluation scenarios exist for the Olist demo. They are not a scored benchmark.
 
 ## Architecture
@@ -63,7 +63,7 @@ flowchart LR
   G -->|application chat only| CDB[(PostgreSQL support schema<br/>user-created conversations/messages,<br/>tickets and staff replies)]
   G --> O[Output safety]
   O --> B
-  G -. sampled .-> LF[Optional Langfuse]
+  G -. redacted traces .-> LF[Langfuse observability]
   Staff[Staff bearer key] --> CDB
 ```
 

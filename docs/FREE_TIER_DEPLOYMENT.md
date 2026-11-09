@@ -20,11 +20,10 @@ scales to zero after 5 idle minutes. The account's plan, usage and the existing
 database's actual storage have not been checked. Import is capped at 700 MB
 actual PostgreSQL database size, reserving at least 300 MB from a 1 GB ceiling.
 
-Langfuse currently lists Hobby as $0 with 50,000 units/month, 30 days of data
-access and 2 users. The app samples at a configurable rate and maintains an
-application-side monthly trace cap of 1,000 by default. These trace counts are a
-local safety limit, not a measurement of Langfuse billable units; check actual
-usage in the Langfuse dashboard.
+The app sends redacted Langfuse traces for every eligible request, up to an
+application-side monthly trace cap of 1,000 by default. The cap is a local
+safety limit, not a measurement of Langfuse billable units; check actual usage
+in the Langfuse dashboard.
 
 Groq Free plan availability and account quota vary. The application limits
 concurrent calls, respects a numeric `Retry-After` value for 429 responses,
@@ -86,6 +85,7 @@ version-3 import completed after explicit approval. The fresh database size was
 re-ingest the KB during transaction initialization; do not use `--reset` against
 shared profiles.
 
-The application uses only an app-side trace cap; check the current Langfuse
-usage dashboard during the month. Disable tracing using `TRACING_ENABLED=0` if
-you need to stop exports. Observability errors never block chat responses.
+The application sends redacted traces at 100% sampling up to its app-side cap;
+check the Langfuse usage dashboard during the month. Set `TRACING_ENABLED=0`
+only when intentionally pausing exports. Observability errors never block chat
+responses.

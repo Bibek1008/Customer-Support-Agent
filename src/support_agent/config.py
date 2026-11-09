@@ -150,7 +150,7 @@ class Settings(BaseSettings):
     otel_endpoint: str = Field(default="", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otel_service_name: str = Field(default="support-agent", alias="OTEL_SERVICE_NAME")
     tracing_enabled: bool = Field(default=True, alias="TRACING_ENABLED")
-    langfuse_sample_rate: float = Field(default=0.1, alias="LANGFUSE_SAMPLE_RATE", ge=0, le=1)
+    langfuse_sample_rate: float = Field(default=1.0, alias="LANGFUSE_SAMPLE_RATE", ge=0, le=1)
     langfuse_monthly_trace_budget: int = Field(
         default=1000, alias="LANGFUSE_MONTHLY_TRACE_BUDGET", ge=0
     )

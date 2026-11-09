@@ -45,9 +45,9 @@ do not establish relevance; routing is evaluated separately from grounding.
 The current deployment configuration uses Groq for generation and safety checks;
 Gemini generation fallback is disabled. Provider quota exhaustion returns a
 retryable error. Do not assume any provider is unlimited or available on a free
-plan; check account quotas before live inference. Langfuse tracing is sampled and
-uses an application-side monthly cap. The development embedding configuration
-may use Gemini, while `render.yaml` selects FastEmbed BGE Small. Those vector
+plan; check account quotas before live inference. Langfuse tracing is enabled at
+100% sampling up to its application-side monthly cap. Both local and Render
+configurations use FastEmbed BGE Small. Those vector
 spaces are incompatible despite both using 384 dimensions; re-embed the approved
 documents for both profiles before changing the serving configuration.
 
