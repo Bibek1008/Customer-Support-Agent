@@ -77,7 +77,7 @@ def test_classifier_quota_failure_is_propagated_without_ticket(monkeypatch):
         lambda **_: pytest.fail("No ticket on quota failure"),
     )
     with pytest.raises(GroqRequestError) as error:
-        loop.run_turn("quota-intent", "Hello, where is my order?")
+        loop.run_turn("quota-intent", "hello")
     assert error.value.status_code == 429
 
 

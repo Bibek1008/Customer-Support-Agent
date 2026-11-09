@@ -1,25 +1,9 @@
-# Security notes
+# Security and privacy controls
 
-- Browser sessions use an HTTP-only cookie and ownership checks for every
-  conversation. Staff APIs use a distinct bearer key.
-- Selecting an Olist account is an explicit, authenticated demo action. The
-  selection is attached to an empty owned conversation; existing history cannot
-  be moved between data profiles.
-- Customer/order/product/seller source IDs, postal codes, locations and review
-  comments are excluded from customer-facing responses. Public aliases are
-  opaque and are not credentials.
-- Olist SQL is fixed and parameterized. The model cannot run SQL. Olist tools
-  are read-only; refunds, cancellations, shipping changes and seller contact
-  are not implemented.
-- Safety checks fail closed. Rate limiting and deadlines bound the public API.
-- PII is redacted before model requests, persistence and traces. Presidio is
-  configured with its regex recognizers and a no-op NLP engine to avoid loading
-  the large spaCy NER model; a small set of local regexes remains as fallback.
-- `.env`, raw data, Kaggle credentials, model cache and logs are ignored by Git.
-  Never place secrets in tracked configuration.
-- Public Olist data is pseudonymous, not anonymous authentication data. It is
-  used only in the controlled research demo described in the UI.
+The application uses an HTTP-only, same-site browser session cookie. Session tokens are stored as hashes, can be revoked, and conversation access is checked against the session owner. Chat requests carry UUID request IDs for idempotent retries. The staff inbox and staff ticket APIs require `ADMIN_API_KEY`; failed staff authentication is throttled.
 
-Review any provider's data handling terms and rotate credentials that have been
-exposed. This public demo is not intended for production-critical customer
-support.
+Before storage, model use, or tracing, user content passes through PII redaction. Safety checks fail closed when required configuration is unavailable. Tool calls are schema-validated and allowlisted. Retrieved text is treated as untrusted input and passed through prompt-injection quarantine. Customer-facing answers are checked for evidence and relevance before release; insufficient evidence produces an abstention or staff handoff.
+
+Logs contain route templates, status, timing, and error classes rather than request bodies or credentials. Langfuse tracing is enabled through environment configuration and uses the project's redaction path. Keep API keys, database URLs, and local `.env` values out of source control. Production configuration must use HTTPS, separate staff and service credentials, and bounded database/model concurrency.
+
+Tickets request only a subject and issue description. Staff replies and ticket status changes remain behind staff authentication. A ticket indicates saved staff review; it does not promise a response time or resolution.

@@ -1,96 +1,23 @@
-# Olist historical support architecture
+# Application architecture
 
-Updated 2026-11-09. Target: Render Native Python, Neon PostgreSQL/pgvector,
-Groq generation/safety, FastEmbed and redacted Langfuse tracing. Tracing is
-enabled at 100% sampling up to the configured monthly application cap.
+This repository is the Demo Office Store customer-support application. It answers questions from the five approved Markdown documents in `knowledge_base/approved/`, keeps browser conversations in PostgreSQL, and offers authenticated staff review.
 
 ```mermaid
-flowchart TB
-  UI[Olist-first interface] --> API[FastAPI: sessions, ownership, revocation, rate limits, request IDs]
-  API --> Context{Conversation profile}
-  Context --> Olist[Historical Olist context]
-  Context --> Office[Explicit separate Office Store]
-  Olist --> Redact[Presidio input redaction]
-  Redact --> Route[Intent routing]
-  Route --> Social[Whole-message greetings and thanks: static replies, no inference]
-  Route --> Safety[Groq input safety for substantive requests]
-  Safety --> Agent[Groq tool loop]
-  Agent --> SQL[19 fixed parameterized read-only tools]
-  SQL --> DB[(olist_demo transactions and curated aliases)]
-  Agent --> Law[consumer_policy: brazil_consumer_law only]
-  Agent --> Docs[knowledge_base: Olist document profiles only]
-  Law --> Vector[(pgvector: profile + provider + model filters)]
-  Docs --> Vector
-  Office --> Fiction[office_store KB and demo tools]
-  Agent --> Q[Tool-output PII redaction and injection quarantine]
-  Q --> Evidence[Source checks, relevance, confidence, unsupported-action checks]
-  Evidence --> Out[Response safety and redaction]
-  Out --> API
-  Agent --> Review[Qualified individual-case or requested staff review]
-  Review --> Inbox[(Authenticated demo staff inbox)]
-  API --> History[(Application conversations and messages)]
-  Agent -. redacted traces .-> LF[Langfuse observability]
+flowchart LR
+  Customer --> Session[Secure browser session]
+  Session --> API[FastAPI chat API]
+  API --> Redact[PII redaction and safety checks]
+  Redact --> Agent[Groq tool loop]
+  Agent --> RAG[FastEmbed query + pgvector retrieval]
+  RAG --> Docs[Approved Demo Office Store documents]
+  Agent --> Tools[Order fixtures and support ticket tools]
+  Tools --> DB[(PostgreSQL support schema)]
+  Agent --> Review[Confidence and evidence checks]
+  Review --> Customer
+  Review --> Staff[Authenticated Support Desk inbox]
+  Agent -. redacted telemetry .-> Langfuse
 ```
 
-## Data boundaries
+Retrieval returns source excerpts with citations. The assistant may cite only retrieved chunks, and the evidence/relevance checks abstain when the sources do not support an answer. The five documents cover shipping, returns (including refund guidance), billing, warranty, and account access. Their content is fictional demonstration policy, not policy for a real merchant.
 
-| Source | Storage/profile | Use |
-|---|---|---|
-| Historical transactions, products, sellers, reviews | Relational `olist_demo` tables | Fixed authorized SQL only |
-| Dataset scope | `olist_transaction_profile` | Curated documentation RAG, never transaction rows |
-| General Brazilian law | `brazil_consumer_law` | Official sources with BR jurisdiction and provenance |
-| Independent app procedures | `olist_demo_policy` | Labeled demonstration assumptions, never merchant terms |
-| Fictional Office Store policies | `office_store` | Explicit separate demo only |
-| Actual application chats/tickets | Public support tables | Durable user/staff history, never invented historical transcripts |
-
-The server validates conversation ownership before loading profile/account into
-request context. Every transaction query resolves aliases within the selected
-account's unique-customer scope. Model arguments cannot supply account identity
-or SQL. Possessing another account's order/product/seller alias grants no access.
-Statistics describe account-observed purchases, not the marketplace. Item and
-payment queries are separate to avoid multiplying monetary totals.
-
-Only registered schemas are exposed, and dispatch validates arguments again.
-Olist dispatch rejects Office Store tools and direct ticket mutations. Raw IDs,
-ZIPs, cities and comments are not projected into outputs; final Olist answers
-containing raw 32-hex identifiers are withheld. Seller state is a broad region.
-Missing records/dates remain unknown. There is no live tracking or action tool.
-
-## Retrieval and legal grounding
-
-The conversation profile remains `olist_demo` for compatibility; the four
-retrieval profiles above are separate. Legacy `olist_demo` embeddings are not
-silently reused. Olist general retrieval searches the three Olist document
-profiles; `consumer_policy` searches law only. Office Store is excluded.
-Both database and memory retrieval preserve provider/model isolation.
-Render uses English FastEmbed `BAAI/bge-small-en-v1.5`, 384 dimensions. Curated
-English legal summaries cite the controlling Portuguese official sources.
-Existing incompatible vector dimensions require a separately approved migration.
-
-Legal documents retain authority, original/retrieved URLs, article, retrieval
-date, jurisdiction, verified status and content version. Ingestion/retrieval
-validate legal provenance. General law cannot establish Olist-specific terms or
-adjudicate an individual historical claim. Unsettled cases require qualified
-review; demo staff are not official Olist support. Unsupported merchant-policy
-claims and unperformed actions are withheld or routed for review.
-
-## Security and lifecycle
-
-PII redaction precedes classification, logs and persistence. The local social
-matcher accepts only whole simple messages; mixed requests retain semantic
-routing and substantive safety gates. Tool outputs are redacted and quarantined.
-Confidence, evidence relevance and response safety remain in place, along with
-staff authentication, revocation, rate limits, leases, request IDs and tracing
-redaction. No hosted evaluation has run during this upgrade.
-
-Startup performs readiness checks only, never migrations or imports. Version-3
-Olist readiness requires all prepared tables, seller aliases, a successful import
-marker and curated accounts. Missing/old initialization is explicit; no profile
-fallback is substituted. Production also requires all three Olist document
-profiles for its configured embedding model.
-
-Review comments are stored separately from review facts and are unavailable to
-tools until Portuguese PII redaction is validated. Geolocation preserves all raw
-rows and builds an internal ZIP-prefix aggregate; customer tools do not expose
-coordinates. Neither data source enters RAG. See the data dictionary, policy
-source register and storage preflight.
+The database contains application sessions, conversations, messages, turns, sample support orders, tickets, staff replies, audit and rate-limit records, evaluation runs, and pgvector chunks. See `src/support_agent/db.py` and `src/support_agent/kb/store.py` for the schema and store behavior. The Render blueprint uses the native Python runtime and the same FastEmbed model configured for local retrieval.

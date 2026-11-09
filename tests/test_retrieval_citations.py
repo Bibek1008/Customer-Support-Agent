@@ -31,6 +31,26 @@ def test_unmatched_query_returns_no_citations(kb):
     assert "do not answer from memory" in result.text.lower()
 
 
+def test_active_store_isolates_demo_office_store_chunks(kb):
+    from support_agent.kb.store import Chunk
+
+    original = next(chunk for chunk in kb._memory if chunk.source_id == "shipping")
+    other_profile = Chunk(
+        source_id="brazil-consumer-law",
+        source_title="Out-of-scope legal source",
+        url=None,
+        text="A separate profile must never be retrieved by the Demo Office Store assistant.",
+        embedding=original.embedding,
+        metadata={"profile": "brazil_consumer_law"},
+    )
+    kb.upsert([other_profile])
+
+    result = search_knowledge_base("How long is standard shipping?", k=8)
+
+    assert any(c.source_id == "shipping" for c in result.citations)
+    assert all(c.source_id != "brazil-consumer-law" for c in result.citations)
+
+
 def test_dispatch_carries_citations(kb):
     outcome = dispatch("knowledge_base", {"query": "return window", "k": 3})
     assert outcome.citations

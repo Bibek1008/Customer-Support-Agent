@@ -243,7 +243,7 @@
     <div class="eyebrow">What you'll build</div>
     <h2><span class="soft">One agent</span> you can put in front of real users.</h2>
     <p class="lead">You build a customer-support agent with tool use over a knowledge base and a
-      ticketing system. It uses Groq for generation and safety checks, retrieves
+      ticketing system. It reasons with Claude Opus 4.8 (<code>claude-opus-4-8</code>), retrieves
       answers that cite their source, runs a guardrail stack on every step, and decides whether to
       answer or escalate based on how well its draft is supported.</p>
     <p>The point of the project is reliability, not a demo. A support agent is only useful if it is
@@ -259,9 +259,9 @@
       <li><b>An agent loop with tool use</b> over the knowledge base and the ticketing system. Tool
         input is parsed as JSON, not string-matched, so a tool call means exactly what it says.</li>
       <li><b>A knowledge base that cites its sources.</b> Documents are chunked, embedded
-        (Render uses <code>BAAI/bge-small-en-v1.5</code> through FastEmbed), and stored
-        in pgvector. The agent may cite only chunks it actually retrieved.</li>
-      <li><b>A guardrail stack:</b> PII redaction with Presidio, model-based safety checks through Groq,
+        (<code>text-embedding-3-large</code> by default, or a local <code>bge-m3</code>), and stored
+        in pgvector with an HNSW index. The agent may cite only chunks it actually retrieved.</li>
+      <li><b>A guardrail stack:</b> PII redaction with Presidio, safety and refusal with Llama Guard 4,
         and an injection quarantine that defangs instructions hidden inside tool output.</li>
       <li><b>Confidence-based handoff.</b> A per-turn score of how well the answer is supported by its
         sources, and the decision to escalate below the threshold &tau;*.</li>
@@ -294,9 +294,10 @@
 <section id="how">
   <div class="wrap">
     <div class="eyebrow">How you'll build it, step by step</div>
-    <h2><span class="soft">Connect the services,</span> then reason, then decide.</h2>
-    <p class="lead">Follow these steps to configure the application. Everything reads secrets from the environment, so copy
-      <code>.env.example</code> to <code>.env</code> and fill in <code>GROQ_API_KEY</code> before
+    <h2><span class="soft">Stand up the stack,</span> then reason, then decide.</h2>
+    <p class="lead">Follow these top to bottom. Each step is a small, concrete action with the exact
+      command to run. Everything reads secrets from the environment, so copy
+      <code>.env.example</code> to <code>.env</code> and fill in <code>ANTHROPIC_API_KEY</code> before
       you start.</p>
 
     <div class="steps">
@@ -304,9 +305,9 @@
         <div class="num">1</div>
         <div>
           <h3>Install and configure</h3>
-          <div class="row"><span class="k">What</span><span>Install the Python package and configure local environment variables.</span></div>
-          <div class="row"><span class="k">Why</span><span>Provider and database credentials belong in environment secrets, never in Git.</span></div>
-          <div class="row how"><span class="k">How</span><span class="chip cmd">pip install -e &quot;.[dev,free]&quot;</span></div>
+          <div class="row"><span class="k">What</span><span>Install the package with its dev and PII extras, and set your keys.</span></div>
+          <div class="row"><span class="k">Why</span><span>Presidio needs its spaCy model, and every secret is read from the environment, never committed.</span></div>
+          <div class="row how"><span class="k">How</span><span class="chip cmd">make install &amp;&amp; cp .env.example .env</span></div>
         </div>
       </div>
 
@@ -314,9 +315,9 @@
         <div class="num">2</div>
         <div>
           <h3>Bring up the stack</h3>
-          <div class="row"><span class="k">What</span><span>Connect a PostgreSQL database with pgvector; inference and safety checks use the configured Groq API, and tracing can use Langfuse.</span></div>
-          <div class="row"><span class="k">Why</span><span>The database persists conversations, tickets, and the approved knowledge base. Provider quotas depend on your account.</span></div>
-          <div class="row how"><span class="k">How</span><span class="chip cmd">Configure DATABASE_URL locally</span></div>
+          <div class="row"><span class="k">What</span><span>Start Postgres with pgvector, a Llama Guard 4 model server, an OpenTelemetry collector, and Langfuse.</span></div>
+          <div class="row"><span class="k">Why</span><span>The knowledge base, the tickets, the safety classifier, and the traces all need somewhere to live.</span></div>
+          <div class="row how"><span class="k">How</span><span class="chip cmd">make db-up</span></div>
         </div>
       </div>
 
@@ -415,23 +416,23 @@
     <div class="eyebrow">Reproduce</div>
     <h2><span class="soft">The commands are real.</span> The numbers they print are yours.</h2>
     <p class="lead">Nothing below hardcodes a key. The eval and threshold commands call the live model
-      on real hardware; they exit early with an instruction if <code>GROQ_API_KEY</code> is unset,
+      on real hardware; they exit early with an instruction if <code>ANTHROPIC_API_KEY</code> is unset,
       rather than printing a number. The unit tests run with a fake model client and a deterministic
       embedder, so they need neither a key nor a GPU.</p>
 
     <div class="codehead">Laptop path · no API key, no GPU</div>
     <div class="code"><span class="cmt"># install and configure</span>
 <span class="prompt">$ </span><span class="cmd">make</span> install
-<span class="prompt">$ </span><span class="cmd">cp</span> .env.example .env        <span class="cmt"># fill in GROQ_API_KEY and the rest</span>
+<span class="prompt">$ </span><span class="cmd">cp</span> .env.example .env        <span class="cmt"># fill in ANTHROPIC_API_KEY and the rest</span>
 
 <span class="cmt"># deterministic guardrail + loop tests — fake client, deterministic embedder</span>
 <span class="prompt">$ </span><span class="cmd">make</span> test</div>
 
-    <div class="codehead">Full path · Groq inference + pgvector</div>
-    <div class="code"><span class="cmt"># configure PostgreSQL+pgvector and approved provider credentials</span>
-<span class="prompt">$ </span><span class="cmd">cp</span> .env.example .env
+    <div class="codehead">Full path · live model + the guardrail GPU</div>
+    <div class="code"><span class="cmt"># stack: Postgres+pgvector, Llama Guard 4, OTel collector, Langfuse</span>
+<span class="prompt">$ </span><span class="cmd">make</span> db-up
 
-<span class="cmt"># ingest the approved knowledge base into pgvector</span>
+<span class="cmt"># ingest the sample knowledge base into pgvector</span>
 <span class="prompt">$ </span><span class="cmd">make</span> ingest
 
 <span class="cmt"># run the service — POST /chat, GET /healthz</span>
@@ -545,13 +546,15 @@
         code <a href="https://github.com/ParticleMedia/RAGTruth">github.com/ParticleMedia/RAGTruth</a></li>
       <li>Tooling:
         <a href="https://github.com/microsoft/presidio">Microsoft Presidio</a> ·
-        <a href="https://console.groq.com/docs/overview">Groq API</a> ·
-        <a href="https://huggingface.co/BAAI/bge-small-en-v1.5">BGE Small English v1.5</a> ·
+        <a href="https://huggingface.co/meta-llama/Llama-Guard-4-12B">Llama Guard 4 (12B)</a> ·
+        <a href="https://openai.com/index/new-embedding-models-and-api-updates/">text-embedding-3-large</a> ·
+        <a href="https://huggingface.co/BAAI/bge-m3">BGE-M3</a> ·
         <a href="https://github.com/pgvector/pgvector">pgvector</a></li>
       <li>Observability and models:
         <a href="https://opentelemetry.io/docs/specs/semconv/gen-ai/">OpenTelemetry GenAI semconv</a> ·
         <a href="https://langfuse.com">Langfuse</a> ·
-        <a href="https://render.com/docs/deploy-fastapi">Render FastAPI deployment</a> ·
+        <a href="https://platform.claude.com/docs/en/about-claude/models/overview">Anthropic models</a> ·
+        <a href="https://platform.claude.com/docs/en/about-claude/pricing">Anthropic pricing</a> ·
         <a href="https://www.nvidia.com/en-us/data-center/h100/">NVIDIA H100 datasheet</a></li>
     </ul>
   </div>

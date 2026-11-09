@@ -34,10 +34,8 @@ def test_default_threshold_from_settings(monkeypatch):
     assert decision.handoff  # 0.70 < 0.75
 
 
-@pytest.mark.parametrize(
-    "text",
-    ["not json", "[]", "{}", '{"confidence":true}', '{"confidence":"high"}', '{"confidence":NaN}'],
-)
+@pytest.mark.parametrize("text", ['not json', '[]', '{}', '{"confidence":true}',
+                                  '{"confidence":"high"}', '{"confidence":NaN}'])
 def test_invalid_confidence_fails_closed(make_client, monkeypatch, text):
     from support_agent.agent import confidence
     from tests.conftest import FakeResponse, TextBlock

@@ -1,104 +1,26 @@
-# Final release readiness
+# Release readiness
 
-Date: 2026-11-09. **Local implementation verified; hosted release is NOT READY.**
-The Olist-first interface and account-scoped tools are implemented. Version-3
-transaction initialization completed on Neon after explicit approval. Fifteen
-FastEmbed KB chunks were uploaded, all five Gemini vectors
-were preserved, and the local app was switched to FastEmbed and restarted.
-Live legal retrieval for the reported question returned Article 49 and the
-e-commerce decree. Real Neon query paths returned historical results; hosted
-answer generation and dedicated local PostgreSQL integration remain unverified.
+## Restoration baseline
 
-## Verification performed
+The restored application baseline is commit `db6a4f4c68208305a910844961aa47d10811f8ab`, the parent of `c72546e` (`chore: organize project and finalize Render deployment preparation`), which is the first commit that adds the Olist integration. The baseline contains Demo Office Store branding, the original Support Desk chat, the five approved KB documents, pgvector RAG, order/ticket tools, escalation, and the staff inbox. The restoration was performed in the worktree only; no branch, index, commit history, or remote was changed.
 
-| Check | Result | Practical limit |
-|---|---|---|
-| Full Python suite | **245 passed, 4 skipped**, 28.05 seconds | Offline scripted model responses and deterministic embeddings; no hosted inference |
-| Browser tests | **8 passed** within full suite | Chrome/Playwright on mobile and desktop; all app APIs mocked |
-| Existing PostgreSQL integration | **3 skipped** | No explicitly enabled dedicated PostgreSQL test database |
-| New Olist PostgreSQL integration | **1 skipped** | No loopback `OLIST_TEST_DATABASE_URL`; actual joins, date arithmetic and account isolation remain unverified on PostgreSQL |
-| Ruff | **Pass** for src/tests/eval and new report generator | No new lint errors |
-| Diff whitespace | **Pass** | Windows line-ending conversion notices are informational |
-| Nine-CSV validation and import | **Pass, zero errors** | All source rows imported; zero relationship orphans; comments separated and raw geolocation retained |
-| Source translation gaps | **Preserved** | 13 products without English category translation remain with source-category fallback |
-| Review/privacy investigation | **Risk scan only** | Review comments map to a separate table, but tools cannot access them; Windows blocked Presidio and Portuguese privacy coverage is unvalidated |
-| Full geolocation | **Imported and verified** | 1,000,163 raw rows and 19,015 ZIP-prefix aggregates; exact coordinates are not exposed to customer tools |
-| UI visual inspection | **Pass** | Reviewed mobile/desktop screenshots; no horizontal overflow; account selector precedes transaction choices |
-| Local web server | **Restarted; `/readyz` returns ready** | Startup performs read-only readiness checks against Neon |
+## Current scope
 
-Browser checks cover cited law answers, failed-message retry, end-session compose
-disabling, public account/sample-order selection, uninitialized dataset state,
-explicit Office Store isolation, responsive layout and staff inbox authentication,
-reply/sign-out. The screenshots use mocked initialization data, not a real Neon
-import. Screenshots are local under `.cache/olist-mobile.png` and
-`.cache/olist-desktop.png`.
+- Original customer chat and authenticated staff inbox restored.
+- Approved KB documents are under `knowledge_base/approved/`; no Brazil-law, FAQ-seed, or Olist aggregate KB is active.
+- Olist runtime routes, prompts, transaction tools, schema modules, account mapping, UI, and evaluation scenarios removed from the active worktree.
+- Session security, request IDs, rate limits, PII redaction, safety checks, injection defenses, evaluation framework, Groq, FastEmbed, and Langfuse remain.
+- Raw local Olist CSV files and `data/reports/` were left untouched. No Neon rows were deleted and no migrations/imports were run.
+- The native Python Render blueprint is restored. No deployment was created.
 
-Olist regression checks cover conservative no-inference small talk and mixed
-requests; required account context across all nineteen tools; account parameters
-and public reference validation; multiple items/payment entries/installments;
-missing records; seller/product/delivery/feedback query boundaries; comment PII
-and injection assessment without text release; profile isolation and provenance;
-return/refund/warranty/delivery legal retrieval with official URLs and BR
-jurisdiction; unknown policy abstention; unsupported merchant terms, raw internal
-IDs and unperformed refund claims; and qualified individual-case review.
-Existing prompt-injection, safety, PII, confidence, tracing, sessions and request
-controls remain covered. These checks do not establish a hosted model's semantic
-accuracy. Real PostgreSQL semantics are intentionally not claimed from mocks.
+## Verification status
 
-## Storage projection
+- Full test suite: **170 passed, 3 skipped**. Tests ran with hosted safety and tracing disabled; no hosted model inference was used.
+- Playwright with local Edge: customer Support Desk page, original topic shortcuts, cited-answer rendering, and staff inbox access shell passed using mocked chat/session APIs.
+- Local FastEmbed: query vector dimension is **384** for `BAAI/bge-small-en-v1.5`.
+- Read-only retrieval against the configured Neon vectors returned the matching original policy for shipping, returns, refunds, warranty, billing, and account access. An unrelated astronomy query produced no eligible source after the active-profile and lexical relevance filters. No rows were written.
+- Ruff lint and format checks pass for the changed application/retrieval, browser-route, and database-safety test files plus the preserved measurement helpers. A full-repository Ruff check still reports 13 baseline findings in `eval/report.py`, `eval/tau_bench_adapter.py`, and `tests/test_injection.py`; the repository-wide format check reports 11 unrelated files that differ from the configured formatter. Those unrelated files were left unchanged.
+- Python compilation and Render Native Python YAML validation passed. Original approved and eval KB fixtures match the baseline commit exactly.
+- Neon schema inventory was read-only. Cleanup details are in `docs/OLIST_DATABASE_CLEANUP_PLAN.md`; no Neon rows, migrations, or KB ingestion were changed.
 
-Measured source CSVs total **126.19 MB**. Complete version-3 import growth was
-estimated at **399.57 MB** and measured at **281,247,744 bytes** for the Olist
-schema. A fresh database measurement after import was **291,995,648 bytes**,
-below the 700 MB project target. The account's broader plan usage is not
-verified.
-See [DATABASE_STORAGE_PREFLIGHT.md](DATABASE_STORAGE_PREFLIGHT.md).
-
-## Release blockers and required approvals
-
-1. Run actual SQL/ownership/date-arithmetic tests against a dedicated local
-   PostgreSQL/pgvector test database. No local PostgreSQL runtime was available.
-   The new Olist test accepts only loopback, port 5433, `support_agent_test`, rejects
-   remote/host-address overrides and always rolls back synthetic changes.
-2. **Completed:** additive support/Olist migrations and version-3 import were
-   approved and applied. Preserve support data; another target or replacement
-   source snapshot needs its own review.
-3. **Completed for KB:** the existing column was verified as `vector(384)`. The
-   approved local FastEmbed vectors were added without a schema migration;
-   existing Gemini vectors were preserved and were not reused as FastEmbed.
-4. **KB ingestion approved and completed:** five legal chunks, four dataset
-   documentation chunks, one demo-procedure chunk and five Office Store chunks.
-   Continue reviewing English summaries, official source status and case limits.
-   The decree's
-   original official publication was verified; subsequent consolidated status
-   was not independently confirmed. No official Olist company consumer terms
-   were verified. General law must never be presented as those terms.
-5. Validate functioning Presidio and Portuguese PII coverage before any comment
-   search, sentiment analysis or customer-facing use. Raw comments are stored
-   separately by the prepared importer but not exposed to tools. Production's
-   Presidio requirement remains enforced.
-6. With separate approval, evaluate actual Groq generation, intent routing,
-   safety, evidence relevance and refusal behavior using reviewed scenarios.
-   No hosted inference or model benchmark score is claimed from this phase.
-7. Verify Render memory/cold-start capacity, account-specific Groq/Neon/Langfuse
-   quotas, model/profile coverage, indexes, backup/recovery and deployment smoke
-   behavior. Deployment remains a later explicitly approved action.
-
-## Prepared commands and artifacts
-
-[OLIST_IMPLEMENTATION.md](OLIST_IMPLEMENTATION.md) contains the gated migration
-and full version-3 import commands. It explicitly stops on
-incompatible vector dimensions. No `--reset` is needed. To run the local SQL test
-later, point `OLIST_TEST_DATABASE_URL` explicitly at the dedicated loopback
-`support_agent_test` database on port 5433; it never uses .env credentials.
-
-- [Architecture and diagram](ARCHITECTURE.md)
-- [Complete dataset field coverage](OLIST_DATA_DICTIONARY.md)
-- [Machine-readable local measurements](olist_preflight.json)
-- [Official policy source register](POLICY_SOURCES.md)
-- [Implementation, SQL tool list, profiles and approval runbook](OLIST_IMPLEMENTATION.md)
-
-Hosted LLM inference, paid resources, Render deployment, commit or push did not
-occur. The approved KB ingestion and local embedding switch are recorded above.
-No support data was deleted or replaced. Comment use, actual PostgreSQL integration testing, customer authentication and
-production readiness remain unverified as described above.
+The raw CSVs and `data/reports/` remain untouched. The raw directory is now Git-ignored. No deployment, commit, or push was performed.

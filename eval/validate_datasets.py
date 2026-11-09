@@ -64,7 +64,9 @@ def _validate_tickets(path: Path, errors: list[str]) -> dict[str, Any]:
             try:
                 record = json.loads(raw)
             except json.JSONDecodeError as exc:
-                result["invalid_lines"].append({"line": line_number, "error": exc.msg})
+                result["invalid_lines"].append(
+                    {"line": line_number, "error": exc.msg}
+                )
                 continue
             if not isinstance(record, dict):
                 result["invalid_lines"].append(
@@ -99,9 +101,7 @@ def _validate_tickets(path: Path, errors: list[str]) -> dict[str, Any]:
                 if not isinstance(value, list) or any(
                     not isinstance(item, str) or not item.strip() for item in value
                 ):
-                    missing_values.append(
-                        f"line {line_number}: {key} must be a list of nonempty strings"
-                    )
+                    missing_values.append(f"line {line_number}: {key} must be a list of nonempty strings")
 
     result["duplicate_ids"] = sorted(duplicate_ids)
     result["missing_values"] = missing_values
@@ -127,7 +127,10 @@ def _validate_kb_docs(path: Path, errors: list[str]) -> dict[str, Any]:
         "exists": path.is_dir(),
         "document_count": len(files),
         "empty_files": empty_files,
-        "files": [{"path": str(file), "size_bytes": file.stat().st_size} for file in files],
+        "files": [
+            {"path": str(file), "size_bytes": file.stat().st_size}
+            for file in files
+        ],
     }
 
 
@@ -149,14 +152,18 @@ def _task_ids(tasks: Any, domain: str, errors: list[str]) -> list[str]:
             continue
         absent = required_fields - task.keys()
         if absent:
-            errors.append(f"{domain}: task at index {index} is missing fields {sorted(absent)}.")
+            errors.append(
+                f"{domain}: task at index {index} is missing fields {sorted(absent)}."
+            )
         task_id = task.get("id")
         if task_id is None or not str(task_id).strip():
             errors.append(f"{domain}: task at index {index} has no nonempty id.")
         else:
             ids.append(str(task_id))
         if not isinstance(task.get("evaluation_criteria"), dict):
-            errors.append(f"{domain}: task at index {index} has invalid evaluation_criteria.")
+            errors.append(
+                f"{domain}: task at index {index} has invalid evaluation_criteria."
+            )
     if len(ids) != len(set(ids)):
         errors.append(f"{domain}: tasks.json contains duplicate task identifiers.")
     return ids
@@ -259,9 +266,9 @@ def _validate_domain(
             errors.append(f"{domain}: train/test splits overlap on {len(overlap)} task IDs.")
         result["split_integrity"] = "valid" if not overlap else "overlap"
         if "base" in normalized:
-            matches_base = (set(normalized["train"]) | set(normalized["test"])) == set(
-                normalized["base"]
-            )
+            matches_base = (
+                set(normalized["train"]) | set(normalized["test"])
+            ) == set(normalized["base"])
             result["train_test_union_matches_base"] = matches_base
             if not matches_base:
                 errors.append(
@@ -294,9 +301,10 @@ def _validate_domain(
                 result["small_task_file_matches_split"] = False
             else:
                 small_ids = _task_ids(small_tasks, "telecom tasks_small.json", errors)
-                result["small_task_file_matches_split"] = len(small_ids) == len(
-                    normalized["small"]
-                ) and set(small_ids) == set(normalized["small"])
+                result["small_task_file_matches_split"] = (
+                    len(small_ids) == len(normalized["small"])
+                    and set(small_ids) == set(normalized["small"])
+                )
                 if not result["small_task_file_matches_split"]:
                     errors.append(
                         "telecom: tasks_small.json does not match the official small task set."
@@ -372,7 +380,9 @@ def _validate_download_manifest(
                 ):
                     errors.append("Tau2 provenance or manifest domains are invalid.")
                 elif sorted(provenance_domains) != sorted(manifest_domains):
-                    errors.append("Tau2 provenance domains do not match the download manifest.")
+                    errors.append(
+                        "Tau2 provenance domains do not match the download manifest."
+                    )
 
     result["entry_count"] = len(entries)
     declared_paths: set[str] = set()
@@ -431,7 +441,9 @@ def _validate_download_manifest(
         ("sha256_mismatches", "SHA-256-mismatched"),
     ):
         if result[field]:
-            errors.append(f"Tau2 download manifest has {len(result[field])} {label} payload files.")
+            errors.append(
+                f"Tau2 download manifest has {len(result[field])} {label} payload files."
+            )
     return result
 
 
@@ -458,7 +470,10 @@ def validate_datasets(
     json_files = sorted(benchmark_data.rglob("*.json")) if benchmark_data.is_dir() else []
     valid_json_count = _check_json_files(json_files, errors)
     download_manifest = _validate_download_manifest(benchmark_data, errors)
-    domains = [_validate_domain(domain, benchmark_data, errors, warnings) for domain in _DOMAINS]
+    domains = [
+        _validate_domain(domain, benchmark_data, errors, warnings)
+        for domain in _DOMAINS
+    ]
     manifest_paths = [
         benchmark_data / "benchmarks" / "text.json",
         benchmark_data / "benchmarks" / "banking.json",
@@ -536,7 +551,9 @@ def validate_datasets(
                             errors.append(f"Duplicate task IDs in official subset {subset_path}.")
                         domain_tasks_path = benchmark_data / "domains" / domain / "tasks.json"
                         if domain_tasks_path.is_file():
-                            domain_tasks = json.loads(domain_tasks_path.read_text(encoding="utf-8"))
+                            domain_tasks = json.loads(
+                                domain_tasks_path.read_text(encoding="utf-8")
+                            )
                             domain_ids = {
                                 str(task.get("id"))
                                 for task in domain_tasks
@@ -548,7 +565,9 @@ def validate_datasets(
                                 )
                             split_path = benchmark_data / "domains" / domain / "split_tasks.json"
                             if split_path.is_file():
-                                split_data = json.loads(split_path.read_text(encoding="utf-8"))
+                                split_data = json.loads(
+                                    split_path.read_text(encoding="utf-8")
+                                )
                                 subset_result["overlap_with_splits"] = {
                                     split_name: len(set(task_ids) & set(split_ids))
                                     for split_name, split_ids in split_data.items()
@@ -632,10 +651,10 @@ def write_reports(report: dict[str, Any], json_path: Path, markdown_path: Path) 
         splits = domain["splits"]
         train = splits.get("train", {}).get("task_count", "n/a")
         test = splits.get("test", {}).get("task_count", "n/a")
-        task_sets = (
-            ", ".join(f"{name}: {count}" for name, count in domain.get("task_sets", {}).items())
-            or "none"
-        )
+        task_sets = ", ".join(
+            f"{name}: {count}"
+            for name, count in domain.get("task_sets", {}).items()
+        ) or "none"
         lines.append(
             f"| {domain['domain']} | {domain['task_count']} | {train} | {test} "
             f"| {task_sets} | {domain['split_integrity']} |"

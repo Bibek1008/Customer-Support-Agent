@@ -60,7 +60,7 @@ def test_quota_fallback_uses_separate_key_model_and_cooldown(monkeypatch):
     assert calls == [GroqClient.endpoint, GeminiClient.endpoint, GeminiClient.endpoint]
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 500, 501])
+@pytest.mark.parametrize("status", [400, 401, 403, 500, 502])
 def test_non_quota_error_never_switches_provider(status, monkeypatch):
     urls = []
 

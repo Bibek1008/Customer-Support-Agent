@@ -1,13 +1,12 @@
-"""Verify pgvector retrieval remains isolated by profile and embedding space."""
+"""The active policy profile and configured embedding space stay isolated."""
 
 from contextlib import contextmanager
 
 from support_agent.config import get_settings
 from support_agent.kb.store import VectorStore
-from support_agent.request_context import RequestContext, current_request
 
 
-def test_vector_search_filters_profile_provider_and_model(monkeypatch):
+def test_vector_search_filters_demo_profile_provider_and_model(monkeypatch):
     monkeypatch.setenv("EMBEDDING_PROVIDER", "fastembed")
     monkeypatch.setenv("EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
     monkeypatch.setenv("EMBEDDING_DIM", "384")
@@ -30,18 +29,7 @@ def test_vector_search_filters_profile_provider_and_model(monkeypatch):
         yield Cursor()
 
     store._cursor = cursor
-    request_token = current_request.set(
-        RequestContext("conversation", "request", "owner", kb_profile="olist_demo")
-    )
-    try:
-        assert store.search([0.0] * 384) == []
-    finally:
-        current_request.reset(request_token)
+    assert store.search([0.0] * 384) == []
 
-    query = executed["query"]
-    assert "profile=%s AND embedding_model=%s AND embedding_provider=%s" in query
-    assert executed["params"][1:4] == (
-        "olist_demo",
-        "BAAI/bge-small-en-v1.5",
-        "fastembed",
-    )
+    assert "COALESCE(metadata->>'profile','') IN ('','office_store')" in executed["query"]
+    assert executed["params"][1:3] == ("BAAI/bge-small-en-v1.5", "fastembed")

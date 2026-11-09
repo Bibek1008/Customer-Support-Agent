@@ -1,7 +1,7 @@
 """Security boundaries and safe behavior, without provider calls."""
 
 import time
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -107,80 +107,11 @@ def test_admin_data_requires_staff_authentication():
     assert TestClient(app).get("/api/admin/evaluations").status_code == 401
 
 
-def test_staff_auth_failures_are_throttled_and_success_clears_bucket(monkeypatch):
-    from support_agent import http_api
-    from support_agent.server import app
-
-    monkeypatch.setenv("ADMIN_API_KEY", "test-admin-key-with-at-least-32-characters")
-    monkeypatch.setenv("PERSISTENCE_ENABLED", "0")
-    get_settings.cache_clear()
-    with http_api._STAFF_AUTH_FAILURES_LOCK:
-        http_api._STAFF_AUTH_FAILURES.clear()
-
-    client = TestClient(app)
-    responses = [
-        client.get("/api/admin/tickets", headers={"Authorization": "Bearer wrong"})
-        for _ in range(11)
-    ]
-    assert [response.status_code for response in responses[:10]] == [401] * 10
-    assert responses[10].status_code == 429
-    assert responses[10].headers["retry-after"] == "60"
-
-    # Authentication succeeds, then the persistence guard denies access and clears the failure bucket.
-    assert (
-        client.get(
-            "/api/admin/tickets",
-            headers={"Authorization": "Bearer test-admin-key-with-at-least-32-characters"},
-        ).status_code
-        == 503
-    )
-    assert (
-        client.get("/api/admin/tickets", headers={"Authorization": "Bearer wrong"}).status_code
-        == 401
-    )
-    get_settings.cache_clear()
-
-
 def test_body_limit_checks_actual_payload():
     from support_agent.server import app
 
     response = TestClient(app).post("/chat", content="x" * 17000)
     assert response.status_code == 413
-
-
-def test_request_observability_returns_generated_id_without_logging_body(caplog):
-    from support_agent.server import app
-
-    caplog.set_level("INFO", logger="support_agent.http_api")
-    response = TestClient(app).get("/healthz")
-    assert response.status_code == 200
-    UUID(response.headers["x-request-id"])
-    assert "request completed id=" in caplog.text
-    assert "duration_ms=" in caplog.text
-    assert "/healthz" in caplog.text
-
-
-def test_customer_can_revoke_session_and_clear_cookie(monkeypatch):
-    from support_agent import http_api
-    from support_agent.server import app
-
-    revoked = []
-
-    class FakeRepository:
-        def delete_session(self, token):
-            revoked.append(token)
-
-    monkeypatch.setattr(http_api, "require_persistence", lambda: None)
-    monkeypatch.setattr(http_api, "check_ingress_rate", lambda _request: None)
-    monkeypatch.setattr(http_api, "get_repository", lambda: FakeRepository())
-    client = TestClient(app)
-    client.cookies.set("support_session", "session-token")
-    response = client.delete("/api/session")
-
-    assert response.status_code == 204
-    assert revoked == ["session-token"]
-    assert "support_session" in response.headers.get("set-cookie", "")
-    assert "max-age=0" in response.headers.get("set-cookie", "").lower()
 
 
 def test_staff_page_does_not_embed_credentials(monkeypatch):
@@ -193,6 +124,31 @@ def test_staff_page_does_not_embed_credentials(monkeypatch):
     assert "sha256-" in response.headers["content-security-policy"]
     assert "localStorage" not in response.text
     assert get_settings().admin_api_key not in response.text
+
+
+def test_customer_chat_restores_demo_office_store_topics():
+    from support_agent.server import app
+
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    assert "Support Desk" in response.text
+    assert "Returns & refunds" in response.text
+    assert "Shipping & delivery" in response.text
+    assert "Billing & subscriptions" in response.text
+    assert "Product warranty" in response.text
+    assert "/api/olist/accounts" not in response.text
+    assert "historical customer profile" not in response.text.lower()
+
+
+def test_staff_inbox_keeps_ticket_reply_and_status_workflows():
+    from support_agent.server import app
+
+    response = TestClient(app).get("/admin/inbox")
+    assert response.status_code == 200
+    assert "Staff access key" in response.text
+    assert "/api/admin/tickets" in response.text
+    assert "/replies" in response.text
+    assert "PATCH" in response.text
 
 
 @pytest.mark.parametrize(

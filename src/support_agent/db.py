@@ -9,7 +9,7 @@ from psycopg_pool import ConnectionPool
 
 from support_agent.config import get_settings
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 3
 
 
 class DatabaseSchemaError(RuntimeError):
@@ -26,13 +26,9 @@ CREATE TABLE IF NOT EXISTS support_sessions (
 );
 CREATE TABLE IF NOT EXISTS support_conversations (
     id TEXT PRIMARY KEY, owner_hash TEXT NOT NULL,
-    kb_profile TEXT NOT NULL DEFAULT 'office_store' CHECK (kb_profile IN ('office_store','olist_demo')),
-    olist_account_alias TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     lease_token TEXT, lease_until TIMESTAMPTZ
 );
-ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS kb_profile TEXT NOT NULL DEFAULT 'office_store';
-ALTER TABLE support_conversations ADD COLUMN IF NOT EXISTS olist_account_alias TEXT;
 CREATE INDEX IF NOT EXISTS support_conversations_owner ON support_conversations(owner_hash);
 CREATE TABLE IF NOT EXISTS support_turns (
     request_id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES support_conversations(id),
@@ -69,9 +65,6 @@ CREATE TABLE IF NOT EXISTS support_rate_limits (
 CREATE TABLE IF NOT EXISTS support_eval_runs (
     id TEXT PRIMARY KEY, kind TEXT NOT NULL, report JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS support_trace_budget (
-    month TEXT PRIMARY KEY, trace_count INTEGER NOT NULL CHECK(trace_count>=0)
 );
 CREATE TABLE IF NOT EXISTS support_demo_orders (
     id TEXT PRIMARY KEY, record JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()

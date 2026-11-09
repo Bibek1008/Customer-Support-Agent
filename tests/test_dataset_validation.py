@@ -13,15 +13,13 @@ def test_local_and_official_datasets_validate():
     assert report["status"] == "passed"
     assert report["summary"]["heldout_records"] == 12
     assert report["summary"]["knowledge_base_documents"] == 5
-    assert (
-        report["summary"]["external_json_files_valid"]
-        == report["summary"]["external_json_files_total"]
-    )
+    assert report["summary"]["external_json_files_valid"] == report["summary"][
+        "external_json_files_total"
+    ]
     assert report["summary"]["download_manifest_files_verified"] == 851
-    assert (
-        report["external_benchmark"]["download_manifest"]["provenance"]["commit"]
-        == "da0835f6c67baef58bdda18f2a3b037dfb3a1754"
-    )
+    assert report["external_benchmark"]["download_manifest"]["provenance"][
+        "commit"
+    ] == "da0835f6c67baef58bdda18f2a3b037dfb3a1754"
     subsets = {
         subset["name"]: subset
         for manifest in report["external_benchmark"]["manifests"]
@@ -45,7 +43,9 @@ def test_local_and_official_datasets_validate():
     assert domains["telecom"]["small_task_file_matches_split"]
     assert domains["telecom"]["small_task_set_overlap_with_base"] == 0
     assert domains["banking_knowledge"]["task_count"] == 97
-    assert domains["banking_knowledge"]["split_integrity"] == ("no official train/test split file")
+    assert domains["banking_knowledge"]["split_integrity"] == (
+        "no official train/test split file"
+    )
     telecom_frozen = next(
         subset
         for manifest in report["external_benchmark"]["manifests"]

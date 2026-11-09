@@ -19,10 +19,6 @@ from tests.conftest import FakeResponse, TextBlock, ToolUseBlock
 def captured(monkeypatch):
     exporter = InMemorySpanExporter()
     monkeypatch.setenv("TRACING_ENABLED", "1")
-    monkeypatch.setenv("LANGFUSE_SAMPLE_RATE", "1")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-lf-test")
-    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://example.invalid")
     monkeypatch.setenv("SAFETY_MODEL_URL", "")
     monkeypatch.setenv("LLM_PROVIDER", "groq")
     monkeypatch.setenv("GROQ_API_KEY", "secret-provider-key")
@@ -124,15 +120,11 @@ def test_real_loop_export_hierarchy_usage_and_privacy(captured, make_client, mon
 
 def test_error_keeps_exception_private_and_propagates(captured):
     client, exporter = captured
-    token = tracing._trace_selected.set(True)
-    try:
-        with (
-            pytest.raises(ValueError, match="jane@example.com"),
-            tracing._span("failing-operation", "tool"),
-        ):
-            raise ValueError("jane@example.com secret-provider-key")
-    finally:
-        tracing._trace_selected.reset(token)
+    with (
+        pytest.raises(ValueError, match="jane@example.com"),
+        tracing._span("failing-operation", "tool"),
+    ):
+        raise ValueError("jane@example.com secret-provider-key")
     client.flush()
     span = exporter.get_finished_spans()[0]
     assert span.attributes["langfuse.observation.level"] == "ERROR"
@@ -169,23 +161,17 @@ def test_fallback_trace_records_actual_gemini_model_usage_and_provider(captured,
     fallback = QuotaFallbackClient(
         GroqClient("secret-provider-key"), GeminiClient("secret-gemini-key")
     )
-    token = tracing._trace_selected.set(True)
-    try:
-        with tracing.model_span(
-            "openai/gpt-oss-20b",
-            name="fallback-test",
-            input=[{"role": "user", "content": "Hello"}],
-        ) as span:
-            response = fallback.create(
-                model="openai/gpt-oss-20b",
-                max_tokens=256,
-                system="Support",
-                messages=[{"role": "user", "content": "Hello"}],
-            )
-            span.record_response(response)
-            span.record_cost(cost_from_usage("openai/gpt-oss-20b", response.usage))
-    finally:
-        tracing._trace_selected.reset(token)
+    with tracing.model_span(
+        "openai/gpt-oss-20b", name="fallback-test", input=[{"role": "user", "content": "Hello"}]
+    ) as span:
+        response = fallback.create(
+            model="openai/gpt-oss-20b",
+            max_tokens=256,
+            system="Support",
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        span.record_response(response)
+        span.record_cost(cost_from_usage("openai/gpt-oss-20b", response.usage))
     client.flush()
     generation = next(s for s in exporter.get_finished_spans() if s.name == "fallback-test")
     assert generation.attributes["langfuse.observation.model.name"] == "gemini-3.5-flash-lite"

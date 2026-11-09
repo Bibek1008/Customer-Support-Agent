@@ -49,9 +49,6 @@ class Citation(BaseModel):
     url: str | None = None
     chunk: str
     score: float = Field(ge=0.0, le=1.0, description="Retrieval similarity, 0..1")
-    provenance: str = "demonstration_assumption"
-    profile: str | None = None
-    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class TicketStatus(str, Enum):
@@ -132,4 +129,6 @@ class Trace(BaseModel):
 
     def total_usd(self) -> float:
         """Sum the dollar cost across every model call in the run."""
-        return round(sum(s.cost.usd for s in self.spans if s.cost is not None), 6)
+        return round(
+            sum(s.cost.usd for s in self.spans if s.cost is not None), 6
+        )

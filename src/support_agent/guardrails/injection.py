@@ -61,7 +61,8 @@ def quarantine_tool_output(tool_name: str, raw: str) -> QuarantineResult:
         sanitized = _TRIGGER_RE.sub(lambda m: f"[flagged-instruction: {m.group(0)}]", raw or "")
 
         wrapped = (
-            f'{_QUARANTINE_HEADER}\n<untrusted source="{tool_name}">\n{sanitized}\n</untrusted>'
+            f"{_QUARANTINE_HEADER}\n"
+            f"<untrusted source=\"{tool_name}\">\n{sanitized}\n</untrusted>"
         )
         span.set("guardrail.injection.triggers", n)
         span.set("guardrail.injection.triggered", n > 0)

@@ -24,7 +24,7 @@ import re
 
 from support_agent.agent.confidence import decide_handoff, score_confidence
 from support_agent.agent.models import get_client, reasoner_kwargs
-from support_agent.agent.prompts import OLIST_SYSTEM_PROMPT, SYSTEM_PROMPT
+from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
 from support_agent.guardrails import refusal
 from support_agent.guardrails.conversation import (
@@ -54,7 +54,7 @@ from support_agent.schemas import (
     Trace,
 )
 from support_agent.tools import handoff as handoff_tool
-from support_agent.tools.registry import dispatch, tool_schemas
+from support_agent.tools.registry import TOOL_SCHEMAS, dispatch
 
 
 @trace_turn
@@ -66,12 +66,6 @@ def run_turn(
 ) -> Trace:
     """Run one customer turn through the agent and return the full trace."""
     settings = get_settings()
-    from support_agent.request_context import current_request
-
-    request_context = current_request.get()
-    olist_mode = bool(request_context and request_context.kb_profile == "olist_demo")
-    system_prompt = OLIST_SYSTEM_PROMPT if olist_mode else SYSTEM_PROMPT
-    available_tools = tool_schemas()
     trace = Trace(conversation_id=conversation_id)
 
     # 1. Redact PII before anything (model or logs) sees the input.
@@ -103,7 +97,7 @@ def run_turn(
             attributes={"category": intent.intent.value},
         )
     )
-    conversation_reply = conversational_reply(intent, prior, redacted.text)
+    conversation_reply = conversational_reply(intent, prior)
     if conversation_reply is not None:
         trace.decision = Decision(
             type=DecisionType.ANSWER,
@@ -187,10 +181,10 @@ def run_turn(
         with model_span(
             kwargs["model"],
             effort=kwargs.get("output_config", {}).get("effort"),
-            input=[{"role": "system", "content": system_prompt}, *messages],
+            input=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
         ) as span:
             span.update(
-                metadata={"tools": available_tools},
+                metadata={"tools": TOOL_SCHEMAS},
                 model_parameters={
                     "max_tokens": kwargs["max_tokens"],
                     "reasoning_effort": kwargs.get("output_config", {}).get("effort", "low"),
@@ -198,8 +192,8 @@ def run_turn(
             )
             resp = get_client().messages.create(
                 **kwargs,
-                system=system_prompt,
-                tools=available_tools,
+                system=SYSTEM_PROMPT,
+                tools=TOOL_SCHEMAS,
                 messages=messages,
             )
             cost = cost_from_usage(kwargs["model"], resp.usage)
@@ -281,7 +275,6 @@ def run_turn(
         citations=_dedupe(citations),
         handoff_reason=handoff_reason,
         customer_id=customer_id,
-        extractive=not olist_mode,
     )
     trace.total_cost = None  # per-span costs are the source of truth
     return trace
@@ -305,11 +298,7 @@ def _run_tool(block, trace: Trace):
         SpanRecord(
             name=f"tool {block.name}",
             kind="tool",
-            attributes={
-                "input": sanitize(tool_input),
-                "output": sanitize(outcome),
-                "unavailable_reason": outcome.unavailable_reason,
-            },
+            attributes={"input": sanitize(tool_input), "output": sanitize(outcome)},
         )
     )
     return outcome
@@ -321,27 +310,9 @@ def _finalize(
     citations: list[Citation],
     handoff_reason: str | None,
     customer_id: str | None,
-    extractive: bool = True,
 ) -> Decision:
     settings = get_settings()
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
-    from support_agent.request_context import current_request
-
-    context = current_request.get()
-    if not citations and any(
-        span.attributes.get("unavailable_reason") == "knowledge_profile_not_initialized"
-        for span in trace.spans
-    ):
-        text = (
-            "The Brazilian consumer-rights knowledge base has not been initialized for this app yet. "
-            "Its legal documents still need to be indexed before I can provide a sourced answer. "
-            "This is a setup issue, rather than missing details about your question."
-            if context and context.kb_profile == "olist_demo"
-            else "The support knowledge base has not been initialized for this app yet. Its documents need to be indexed before I can provide a sourced answer."
-        )
-        return _unknown(trace, "knowledge_profile_not_initialized", message=text)
-    if context and context.kb_profile == "olist_demo" and handoff_reason:
-        return _handoff(trace, handoff_reason, 0.0, settings.handoff_threshold, customer_id)
 
     # A missing answer or evidence is not permission to open a staff ticket.
     # Explicit human requests and verification-required actions route earlier.
@@ -349,30 +320,9 @@ def _finalize(
         return _unknown(trace, handoff_reason or "No grounded answer was produced.")
     if not citations:
         return _unknown(trace, "No supporting sources were retrieved.")
-    if (
-        context
-        and context.kb_profile == "olist_demo"
-        and re.search(r"\b[0-9a-fA-F]{32}\b", answer_text)
-    ):
-        return _unknown(
-            trace, "Internal dataset identifiers cannot appear in customer-facing answers."
-        )
-    if (
-        context
-        and context.kb_profile == "olist_demo"
-        and re.search(
-            r"\b(?:Olist(?:'s|’s)?|our|the merchant(?:'s|’s)?) (?:official |company )?(?:return|refund|warranty|cancellation|shipping) polic(?:y|ies) (?:is|are|allows?|requires?|provides?|offers?)\b",
-            answer_text,
-            re.IGNORECASE,
-        )
-    ):
-        return _unknown(
-            trace,
-            "No verified Olist merchant policy is available; general law is not merchant terms.",
-        )
 
     # Score confidence against the sources actually retrieved, then apply tau*.
-    if settings.answer_mode == "extractive" and extractive:
+    if settings.answer_mode == "extractive":
         safe_sources = [
             source
             for source in citations
@@ -437,8 +387,8 @@ def _finalize(
     )
 
 
-def _unknown(trace: Trace, reason: str, message: str | None = None) -> Decision:
-    text = message or (
+def _unknown(trace: Trace, reason: str) -> Decision:
+    text = (
         "I don't know based on the approved support information available. "
         "Please share more details, or ask for staff review if you'd like help from a person."
     )

@@ -38,7 +38,6 @@ class Chunk:
     embedding: list[float] = field(default_factory=list)
     metadata: dict[str, str] = field(default_factory=dict)
     active: bool = True
-    profile: str = "office_store"
 
 
 @dataclass
@@ -49,7 +48,6 @@ class Retrieved:
     text: str
     score: float  # cosine similarity in [0, 1]
     metadata: dict[str, str] = field(default_factory=dict)
-    profile: str = "office_store"
 
 
 class VectorStore:
@@ -73,6 +71,8 @@ class VectorStore:
             self._conn = psycopg.connect(
                 self.settings.database_url, autocommit=True, connect_timeout=10
             )
+            if self.settings.app_env != "production":
+                self._ensure_schema()
             register_vector(self._conn)
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -127,14 +127,6 @@ class VectorStore:
                 "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
             )
             cur.execute(
-                "ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS profile TEXT NOT NULL DEFAULT 'office_store'"
-            )
-            cur.execute("ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS embedding_provider TEXT")
-            cur.execute("ALTER TABLE kb_chunks ADD COLUMN IF NOT EXISTS embedding_model TEXT")
-            cur.execute(
-                "UPDATE kb_chunks SET embedding_provider=metadata->>'embedding_provider', embedding_model=metadata->>'embedding_model' WHERE embedding_provider IS NULL OR embedding_model IS NULL"
-            )
-            cur.execute(
                 """
                 SELECT source_id, content_hash
                 FROM kb_chunks
@@ -160,9 +152,11 @@ class VectorStore:
                     "UPDATE kb_chunks SET content_hash = %s WHERE id = %s",
                     (content_hash, row_id),
                 )
-            cur.execute("DROP INDEX IF EXISTS kb_chunks_source_content_hash")
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS kb_chunks_profile_model_source_hash ON kb_chunks(profile, embedding_provider, embedding_model, source_id, content_hash)"
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS kb_chunks_source_content_hash
+                ON kb_chunks (source_id, content_hash)
+                """
             )
             if dim <= 2000:
                 cur.execute(
@@ -174,30 +168,20 @@ class VectorStore:
         """Insert chunks. Returns the count written."""
         if not chunks:
             return 0
-        sources = {
-            (
-                chunk.profile,
-                chunk.source_id,
-                self.settings.embedding_provider,
-                self.settings.embedding_model,
-            )
-            for chunk in chunks
-        }
+        sources = {chunk.source_id for chunk in chunks}
         if self._use_db:
             with self._cursor() as cur:
-                for profile, source, provider, model in sources:
-                    cur.execute(
-                        "UPDATE kb_chunks SET active=FALSE WHERE profile=%s AND source_id=%s AND embedding_provider=%s AND embedding_model=%s",
-                        (profile, source, provider, model),
-                    )
+                cur.execute(
+                    "UPDATE kb_chunks SET active=FALSE WHERE source_id=ANY(%s)", (list(sources),)
+                )
                 for c in chunks:
                     content_hash = self._content_hash(c.text)
                     cur.execute(
                         """
                         INSERT INTO kb_chunks
-                            (profile, embedding_provider, embedding_model, source_id, source_title, url, text, embedding, metadata, content_hash)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s::jsonb, %s)
-                        ON CONFLICT (profile, embedding_provider, embedding_model, source_id, content_hash) DO UPDATE SET
+                            (source_id, source_title, url, text, embedding, metadata, content_hash)
+                        VALUES (%s, %s, %s, %s, %s::vector, %s::jsonb, %s)
+                        ON CONFLICT (source_id, content_hash) DO UPDATE SET
                             source_title = EXCLUDED.source_title,
                             url = EXCLUDED.url,
                             text = EXCLUDED.text,
@@ -206,9 +190,6 @@ class VectorStore:
                             active = TRUE
                         """,
                         (
-                            c.profile,
-                            self.settings.embedding_provider,
-                            self.settings.embedding_model,
                             c.source_id,
                             c.source_title,
                             c.url,
@@ -220,34 +201,15 @@ class VectorStore:
                     )
             return len(chunks)
         for chunk in self._memory:
-            if (
-                chunk.profile,
-                chunk.source_id,
-                chunk.metadata.get("embedding_provider"),
-                chunk.metadata.get("embedding_model"),
-            ) in sources:
+            if chunk.source_id in sources:
                 chunk.active = False
         existing = {
-            (
-                chunk.profile,
-                chunk.source_id,
-                chunk.metadata.get("embedding_provider"),
-                chunk.metadata.get("embedding_model"),
-                self._content_hash(chunk.text),
-            ): index
+            (chunk.source_id, self._content_hash(chunk.text)): index
             for index, chunk in enumerate(self._memory)
         }
         for chunk in chunks:
-            chunk.metadata.setdefault("embedding_provider", self.settings.embedding_provider)
-            chunk.metadata.setdefault("embedding_model", self.settings.embedding_model)
             chunk.active = True
-            key = (
-                chunk.profile,
-                chunk.source_id,
-                chunk.metadata["embedding_provider"],
-                chunk.metadata["embedding_model"],
-                self._content_hash(chunk.text),
-            )
+            key = (chunk.source_id, self._content_hash(chunk.text))
             if key in existing:
                 self._memory[existing[key]] = chunk
             else:
@@ -259,25 +221,20 @@ class VectorStore:
     def _content_hash(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    def clear(self, profile: str = "office_store") -> None:
+    def clear(self) -> None:
         if self._use_db:
             with self._cursor() as cur:
-                cur.execute("UPDATE kb_chunks SET active=FALSE WHERE profile=%s", (profile,))
-        for chunk in self._memory:
-            if chunk.profile == profile:
-                chunk.active = False
+                cur.execute("TRUNCATE kb_chunks")
+        self._memory.clear()
 
     # --- reads ----------------------------------------------------------------
-    def search(
-        self, query_embedding: list[float], k: int = 4, *, profile: str | None = None
-    ) -> list[Retrieved]:
+    def search(self, query_embedding: list[float], k: int = 4) -> list[Retrieved]:
         """Return the ``k`` nearest chunks with a cosine similarity score."""
         if self._use_db:
-            return self._search_db(query_embedding, k, profile)
-        return self._search_memory(query_embedding, k, profile)
+            return self._search_db(query_embedding, k)
+        return self._search_memory(query_embedding, k)
 
-    def _search_db(self, q: list[float], k: int, profile: str | None = None) -> list[Retrieved]:
-        profile = profile or self._profile()
+    def _search_db(self, q: list[float], k: int) -> list[Retrieved]:
         with self._cursor() as cur:
             # 1 - cosine_distance = cosine_similarity, clamped to [0, 1].
             cur.execute(
@@ -285,11 +242,14 @@ class VectorStore:
                 SELECT source_id, source_title, url, text, metadata,
                        1 - (embedding <=> %s::vector) AS similarity
                 FROM kb_chunks
-                WHERE active=TRUE AND profile=%s AND embedding_model=%s AND embedding_provider=%s
+                WHERE active=TRUE
+                  AND metadata->>'embedding_model'=%s
+                  AND metadata->>'embedding_provider'=%s
+                  AND COALESCE(metadata->>'profile','') IN ('','office_store')
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
                 """,
-                (q, profile, self.settings.embedding_model, self.settings.embedding_provider, q, k),
+                (q, self.settings.embedding_model, self.settings.embedding_provider, q, k),
             )
             rows = cur.fetchall()
         return [
@@ -300,12 +260,11 @@ class VectorStore:
                 text=r[3],
                 score=max(0.0, min(1.0, float(r[5]))),
                 metadata=r[4] if isinstance(r[4], dict) else json.loads(r[4]),
-                profile=profile,
             )
             for r in rows
         ]
 
-    def _search_memory(self, q: list[float], k: int, profile: str | None = None) -> list[Retrieved]:
+    def _search_memory(self, q: list[float], k: int) -> list[Retrieved]:
         def cosine(a: list[float], b: list[float]) -> float:
             # Vectors are stored L2-normalized, so cosine is the dot product.
             return sum(x * y for x, y in zip(a, b))
@@ -318,38 +277,23 @@ class VectorStore:
                 text=c.text,
                 score=max(0.0, min(1.0, cosine(q, c.embedding))),
                 metadata=c.metadata,
-                profile=c.profile,
             )
             for c in self._memory
-            if c.active
-            and c.profile == (profile or self._profile())
-            and c.metadata.get("embedding_provider") == self.settings.embedding_provider
-            and c.metadata.get("embedding_model") == self.settings.embedding_model
+            if c.active and c.metadata.get("profile", "office_store") == "office_store"
         ]
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[:k]
 
-    @staticmethod
-    def _profile() -> str:
-        from support_agent.request_context import current_request
-
-        request = current_request.get()
-        return request.kb_profile if request else "office_store"
-
-    def count(self, profile: str | None = None) -> int:
-        profile = profile or self._profile()
+    def count(self) -> int:
         if self._use_db:
             with self._cursor() as cur:
                 cur.execute(
-                    "SELECT COUNT(*) FROM kb_chunks WHERE active=TRUE AND profile=%s AND embedding_model=%s AND embedding_provider=%s",
-                    (profile, self.settings.embedding_model, self.settings.embedding_provider),
+                    "SELECT COUNT(*) FROM kb_chunks WHERE active=TRUE AND metadata->>'embedding_model'=%s AND metadata->>'embedding_provider'=%s AND COALESCE(metadata->>'profile','') IN ('','office_store')",
+                    (self.settings.embedding_model, self.settings.embedding_provider),
                 )
                 return int(cur.fetchone()[0])
         return sum(
-            chunk.active
-            and chunk.profile == profile
-            and chunk.metadata.get("embedding_provider") == self.settings.embedding_provider
-            and chunk.metadata.get("embedding_model") == self.settings.embedding_model
+            chunk.active and chunk.metadata.get("profile", "office_store") == "office_store"
             for chunk in self._memory
         )
 

@@ -115,9 +115,7 @@ def test_redacted_text_is_stored_and_sent_to_model(make_client, monkeypatch, cap
     from tests.conftest import FakeResponse, TextBlock
 
     # Model answers immediately with no tool calls.
-    client = make_client(
-        [FakeResponse(content=[TextBlock("Sure, here is help.")], stop_reason="end_turn")]
-    )
+    client = make_client([FakeResponse(content=[TextBlock("Sure, here is help.")], stop_reason="end_turn")])
     monkeypatch.setattr(loop_mod, "get_client", lambda: client)
     monkeypatch.setattr(loop_mod, "score_confidence", lambda **_: _Conf(0.9))
 

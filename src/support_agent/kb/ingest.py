@@ -17,7 +17,6 @@ import re
 from pathlib import Path
 
 from support_agent.kb.embed import get_embedder
-from support_agent.kb.profiles import PROFILES, validate_document
 from support_agent.kb.store import Chunk, get_store
 
 _FRONT_MATTER = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
@@ -60,14 +59,11 @@ def ingest_directory(
     docs_dir: str,
     chunk_size: int | None = None,
     overlap: int | None = None,
-    profile: str = "office_store",
 ) -> int:
     """Ingest every Markdown/text file under ``docs_dir`` and return chunks processed."""
     store = get_store()
     embedder = get_embedder()
     settings = store.settings
-    if profile not in PROFILES:
-        raise ValueError("Unsupported KB profile.")
     chunk_size = chunk_size if chunk_size is not None else settings.kb_chunk_size
     overlap = overlap if overlap is not None else settings.kb_chunk_overlap
     if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
@@ -82,7 +78,6 @@ def ingest_directory(
     for path in files:
         raw = path.read_text(encoding="utf-8")
         meta, body = _parse_front_matter(raw)
-        validate_document(profile, meta)
         title = meta.get("title", path.stem.replace("-", " ").title())
         url = meta.get("url") or None
         source_id = path.relative_to(root).with_suffix("").as_posix()
@@ -100,7 +95,6 @@ def ingest_directory(
                     url=url,
                     text=piece,
                     metadata=metadata,
-                    profile=profile,
                 )
             )
 
@@ -121,20 +115,18 @@ def main() -> None:
         "--chunk-overlap", type=int, default=None, help="Chunk overlap in characters"
     )
     parser.add_argument("--reset", action="store_true", help="Clear existing chunks first")
-    parser.add_argument("--profile", choices=PROFILES, default="office_store")
     args = parser.parse_args()
 
     settings = get_store().settings
     docs_dir = args.docs or settings.kb_docs_path
     store = get_store()
     if args.reset:
-        store.clear(profile=args.profile)
+        store.clear()
 
     written = ingest_directory(
         docs_dir,
         chunk_size=args.chunk_size,
         overlap=args.chunk_overlap,
-        profile=args.profile,
     )
     print(f"Ingested {written} chunks from {docs_dir} (store now holds {store.count()}).")
 

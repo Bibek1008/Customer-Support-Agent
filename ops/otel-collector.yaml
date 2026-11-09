@@ -28,4 +28,4 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlphttp/langfuse]
+      exporters: [otlphttp/langfuse, debug]

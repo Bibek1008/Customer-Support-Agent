@@ -19,10 +19,10 @@ production-support-agent/
   FACTS.md                         Pinned facts: models, cited benchmarks, tools, hardware, metrics.
   SPEC.md                          This blueprint for all four surfaces.
   README.md                        What it is, the honest headline, quickstart, reproduce commands.
-  pyproject.toml                   Python 3.12 project; Groq/optional Anthropic, FastAPI, pgvector, Presidio, OpenTelemetry.
+  pyproject.toml                   Python 3.12 project; deps: anthropic, fastapi, pgvector, presidio, opentelemetry.
   .env.example                     Every env var the system reads; real secrets never committed.
   Makefile                         ingest / serve / eval / test one-liners.
-  render.yaml                      Render native Python service configuration.
+  docker-compose.yml               Postgres+pgvector, Llama Guard 4 model server, OTel collector, Langfuse.
 
   src/support_agent/
     __init__.py
@@ -32,9 +32,9 @@ production-support-agent/
 
     agent/
       __init__.py
-      loop.py                      The agent loop over the configured model tool runner; halts on resolve or handoff.
+      loop.py                      The agent loop over the Claude tool runner; halts on resolve or handoff.
       prompts.py                   System prompt, refusal policy, and the brand tone rubric (one place).
-      models.py                    Configurable provider routing; Render uses Groq GPT-OSS 20B.
+      models.py                    Model routing: Opus 4.8 reasoner, Haiku 4.5 classifier (IDs from FACTS.md).
       confidence.py                Per-turn confidence score and the handoff decision against threshold tau*.
 
     tools/
@@ -48,13 +48,13 @@ production-support-agent/
     kb/
       __init__.py
       ingest.py                    Chunk KB docs, embed, upsert into pgvector with source metadata.
-      embed.py                     Embedding client: Render uses FastEmbed BGE Small English v1.5.
+      embed.py                     Embedding client: text-embedding-3-large default, BGE-M3 self-host option.
       store.py                     pgvector store (HNSW); retrieval returns text + source for citation.
 
     guardrails/
       __init__.py
       pii.py                       Presidio analyzer + anonymizer: redact PII on input and before logging.
-      safety.py                    Configured safety provider classifies input prompts and model responses.
+      safety.py                    Llama Guard 4 client: classify input prompt and model response.
       refusal.py                   Refusal policy: out-of-scope, disallowed, and low-confidence paths.
       injection.py                 Treat tool output as untrusted; quarantine and sanitize before the model reads it.
 
@@ -84,7 +84,7 @@ production-support-agent/
 
   tests/
     test_guardrails_pii.py         PII is redacted on input and never reaches logs.
-    test_guardrails_safety.py      Unsafe input and unsafe response handling is tested with provider fakes.
+    test_guardrails_safety.py      Unsafe input and unsafe response are both caught by Llama Guard 4.
     test_injection.py              Injected instruction inside a tool result does not trigger an unsanctioned tool call.
     test_retrieval_citations.py    Every answer claim maps to a retrieved chunk.
     test_confidence_handoff.py     Below tau*, the agent escalates instead of answering.
@@ -150,7 +150,7 @@ Section covers use the paper aesthetic; figures are reused from the book.
    handoff queue, tracing.
 4. **Tool use over a real knowledge base** — retrieval with citations; pgvector; embeddings.
 5. **Ticketing and actions** — the tools that change state, and why they are gated.
-6. **Guardrails** — PII redaction (Presidio), configured model-based safety, injection
+6. **Guardrails** — PII redaction (Presidio), safety and refusal (Llama Guard 4), injection
    quarantine (AgentDojo reference).
 7. **Confidence and handoff** — the τ\* idea: answer above threshold, escalate below it.
 8. **The eval suite** — accuracy, resolution rate, hallucination rate, tone; how each is scored.
