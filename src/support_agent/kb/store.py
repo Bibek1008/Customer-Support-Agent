@@ -71,8 +71,6 @@ class VectorStore:
             self._conn = psycopg.connect(
                 self.settings.database_url, autocommit=True, connect_timeout=10
             )
-            if self.settings.app_env != "production":
-                self._ensure_schema()
             register_vector(self._conn)
             with self._conn.cursor() as cur:
                 cur.execute(

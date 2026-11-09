@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from support_agent.config import get_settings
-from support_agent.db import DatabaseSchemaError, check_database, migrate
+from support_agent.db import DatabaseSchemaError, check_database
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.audit import capture_events
 from support_agent.repository import (
@@ -54,8 +54,6 @@ def startup():
 
         validate_credentials()
     if settings.persistence_enabled:
-        if settings.app_env != "production":
-            migrate()
         check_database()
     if settings.app_env == "production":
         from support_agent.guardrails.safety import SafetyRole, get_classifier

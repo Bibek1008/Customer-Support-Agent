@@ -66,9 +66,11 @@ embedding dimension: changing this setting does not migrate existing vectors.
 The first embedding call downloads the model to `.cache/fastembed`; subsequent
 embedding calls run locally without an API key or a GPU.
 
-Add your support documents under `knowledge_base/approved`, then run:
+Apply the support schema explicitly once to a prepared database, then ingest the
+approved documents. Server startup does not run migrations automatically:
 
 ```powershell
+.venv/Scripts/python.exe -m support_agent.db
 .venv/Scripts/python.exe -m support_agent.kb.ingest
 .venv/Scripts/python.exe -m uvicorn support_agent.server:app --host 127.0.0.1 --port 8000
 ```

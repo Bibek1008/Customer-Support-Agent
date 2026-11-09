@@ -7,6 +7,8 @@ accounting) is exercised without a network call.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import support_agent.agent.loop as loop_mod
 from support_agent.schemas import Citation, DecisionType
 from support_agent.tools.registry import ToolOutcome
@@ -59,6 +61,48 @@ def test_resolve_path(make_client, monkeypatch):
     assert any(c.source_id == "returns-policy" for c in trace.decision.citations)
     # Cost was accounted from the two model calls (arithmetic on usage fields).
     assert trace.total_usd() > 0
+
+
+def test_model_that_skips_kb_gets_a_cited_synthetic_policy_fallback(make_client, monkeypatch):
+    citation = Citation(
+        source_id="returns-policy",
+        source_title="Returns and Refunds Policy",
+        url="https://help.example.com/returns",
+        chunk="You can return most items within 30 days of delivery.",
+        score=0.8,
+    )
+    calls = []
+
+    def dispatch(name, inp):
+        calls.append((name, inp))
+        return ToolOutcome(text=citation.chunk, citations=[citation])
+
+    monkeypatch.setattr(loop_mod, "dispatch", dispatch)
+    monkeypatch.setattr(loop_mod, "score_confidence", lambda **_: _Conf(0.9))
+    monkeypatch.setattr(
+        loop_mod.refusal,
+        "check_response",
+        lambda _: SimpleNamespace(refuse=False),
+    )
+    client = make_client(
+        [
+            FakeResponse(
+                content=[TextBlock("I don't know based on the available support information.")],
+                stop_reason="end_turn",
+            )
+        ]
+    )
+    monkeypatch.setattr(loop_mod, "get_client", lambda: client)
+
+    trace = loop_mod.run_turn(
+        conversation_id="c-fallback", user_message="What is your return policy?"
+    )
+
+    assert calls == [("knowledge_base", {"query": "What is your return policy?", "k": 4})]
+    assert trace.decision.type == DecisionType.ANSWER
+    assert "30 days" in trace.decision.answer
+    assert trace.decision.citations[0].source_id == "returns-policy"
+    assert any(span.name == "tool knowledge_base" for span in trace.spans)
 
 
 def test_tool_output_pii_is_redacted_before_model_request(make_client, monkeypatch):

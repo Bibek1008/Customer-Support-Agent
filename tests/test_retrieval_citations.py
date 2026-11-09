@@ -18,6 +18,18 @@ def test_returns_query_retrieves_returns_policy(kb):
     assert 0.0 <= top.score <= 1.0
 
 
+def test_demo_return_shortcut_retrieves_synthetic_policy(kb):
+    # This is the exact question shown by the website's Returns & refunds shortcut.
+    result = search_knowledge_base("What is your return policy?", k=4)
+
+    assert result.citations
+    top = result.citations[0]
+    assert top.source_id == "returns-policy"
+    assert top.url == "https://help.example.com/returns"
+    assert "30 days" in top.chunk
+    assert "5 to 7 business days" in top.chunk
+
+
 def test_shipping_query_retrieves_shipping_doc(kb):
     result = search_knowledge_base("how fast is standard shipping", k=4)
     assert result.citations

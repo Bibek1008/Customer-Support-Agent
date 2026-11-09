@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 
 from support_agent.agent.confidence import decide_handoff, score_confidence
 from support_agent.agent.models import get_client, reasoner_kwargs
@@ -240,20 +241,8 @@ def run_turn(
             outcome = _run_tool(block, trace)
             if outcome.is_handoff:
                 handoff_reason = outcome.handoff_reason
+            citations.extend(_redact_citations(outcome.citations))
             redactor = get_redactor()
-            citations.extend(
-                citation.model_copy(
-                    update={
-                        "source_id": redactor.redact(citation.source_id).text,
-                        "source_title": redactor.redact(citation.source_title).text,
-                        "url": (
-                            redactor.redact(citation.url).text if citation.url is not None else None
-                        ),
-                        "chunk": redactor.redact(citation.chunk).text,
-                    }
-                )
-                for citation in outcome.citations
-            )
             safe_tool_output = redactor.redact(outcome.text or "(no output)").text
             quarantined = quarantine_tool_output(block.name, safe_tool_output)
             tool_results.append(
@@ -267,6 +256,19 @@ def run_turn(
 
         if handoff_reason is not None:
             break
+
+    # Some compatible models answer without invoking the read-only KB tool.
+    # Retry retrieval deterministically before abstaining; only return a source
+    # excerpt when the normal retrieval filters produce a relevant citation.
+    if handoff_reason is None and not citations:
+        outcome = _run_tool(
+            SimpleNamespace(name="knowledge_base", input={"query": redacted.text, "k": 4}),
+            trace,
+        )
+        citations = _redact_citations(outcome.citations)
+        if citations:
+            source = max(citations, key=lambda citation: citation.score)
+            answer_text = f"{source.source_title}:\n\n{source.chunk}\n\nSource: {source.source_id}."
 
     # 4. Release a relevant supported answer, or acknowledge missing knowledge.
     trace.decision = _finalize(
@@ -302,6 +304,21 @@ def _run_tool(block, trace: Trace):
         )
     )
     return outcome
+
+
+def _redact_citations(citations: list[Citation]) -> list[Citation]:
+    redactor = get_redactor()
+    return [
+        citation.model_copy(
+            update={
+                "source_id": redactor.redact(citation.source_id).text,
+                "source_title": redactor.redact(citation.source_title).text,
+                "url": redactor.redact(citation.url).text if citation.url is not None else None,
+                "chunk": redactor.redact(citation.chunk).text,
+            }
+        )
+        for citation in citations
+    ]
 
 
 def _finalize(

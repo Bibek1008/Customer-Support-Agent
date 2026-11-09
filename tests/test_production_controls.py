@@ -93,6 +93,20 @@ def test_production_config_fails_without_required_controls(monkeypatch):
         get_settings().validate_production()
 
 
+def test_persistent_development_startup_checks_schema_without_migrating(monkeypatch):
+    from support_agent import http_api
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("PERSISTENCE_ENABLED", "1")
+    get_settings.cache_clear()
+    checked = []
+    monkeypatch.setattr(http_api, "check_database", lambda: checked.append(True))
+
+    http_api.startup()
+
+    assert checked == [True]
+
+
 def test_cross_origin_requests_are_rejected():
     from support_agent.server import app
 
