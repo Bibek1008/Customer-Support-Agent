@@ -75,20 +75,16 @@ task; they have not been run here.
 .venv/Scripts/python.exe -m support_agent.olist.migrate
 
 # Import is one transaction and aborts if the database exceeds 700 MB.
-.venv/Scripts/python.exe -m support_agent.olist.importer
-
-# Ingest profile documents using the exact same embedding provider/model as the app.
-.venv/Scripts/python.exe -m support_agent.kb.ingest --docs knowledge_base/approved --profile office_store
-.venv/Scripts/python.exe -m support_agent.kb.ingest --docs knowledge_base/olist_demo --profile olist_demo
+.venv/Scripts/python.exe -m support_agent.olist.importer --report data/reports/olist-import-v3.json
 ```
 
-The current `.env` uses Gemini embeddings for existing 384-dimensional Office
-Store vectors. Render is configured for local FastEmbed BGE Small 384. Equal
-dimensions do not make model spaces compatible: both profiles must be
-re-embedded with FastEmbed before the Render configuration is served. The
-profile/model-aware store preserves old vectors while this controlled
-re-ingestion is pending. Do not use `--reset`; profile-scoped reset is available
-if a later re-ingestion is intentionally approved.
+The current local app and all four hosted KB profiles use FastEmbed BGE Small
+384. Five previous Gemini vectors remain preserved and filtered out. The Olist
+version-3 import completed after explicit approval. The fresh database size was
+291,995,648 bytes; measured Olist growth was 281,247,744 bytes, below the
+399.57 MB projection and 700 MB cap. The importer preserved support data. Do not
+re-ingest the KB during transaction initialization; do not use `--reset` against
+shared profiles.
 
 The application uses only an app-side trace cap; check the current Langfuse
 usage dashboard during the month. Disable tracing using `TRACING_ENABLED=0` if

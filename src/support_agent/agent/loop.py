@@ -103,7 +103,7 @@ def run_turn(
             attributes={"category": intent.intent.value},
         )
     )
-    conversation_reply = conversational_reply(intent, prior)
+    conversation_reply = conversational_reply(intent, prior, redacted.text)
     if conversation_reply is not None:
         trace.decision = Decision(
             type=DecisionType.ANSWER,
@@ -305,7 +305,11 @@ def _run_tool(block, trace: Trace):
         SpanRecord(
             name=f"tool {block.name}",
             kind="tool",
-            attributes={"input": sanitize(tool_input), "output": sanitize(outcome)},
+            attributes={
+                "input": sanitize(tool_input),
+                "output": sanitize(outcome),
+                "unavailable_reason": outcome.unavailable_reason,
+            },
         )
     )
     return outcome
@@ -321,6 +325,23 @@ def _finalize(
 ) -> Decision:
     settings = get_settings()
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
+    from support_agent.request_context import current_request
+
+    context = current_request.get()
+    if not citations and any(
+        span.attributes.get("unavailable_reason") == "knowledge_profile_not_initialized"
+        for span in trace.spans
+    ):
+        text = (
+            "The Brazilian consumer-rights knowledge base has not been initialized for this app yet. "
+            "Its legal documents still need to be indexed before I can provide a sourced answer. "
+            "This is a setup issue, rather than missing details about your question."
+            if context and context.kb_profile == "olist_demo"
+            else "The support knowledge base has not been initialized for this app yet. Its documents need to be indexed before I can provide a sourced answer."
+        )
+        return _unknown(trace, "knowledge_profile_not_initialized", message=text)
+    if context and context.kb_profile == "olist_demo" and handoff_reason:
+        return _handoff(trace, handoff_reason, 0.0, settings.handoff_threshold, customer_id)
 
     # A missing answer or evidence is not permission to open a staff ticket.
     # Explicit human requests and verification-required actions route earlier.
@@ -328,6 +349,27 @@ def _finalize(
         return _unknown(trace, handoff_reason or "No grounded answer was produced.")
     if not citations:
         return _unknown(trace, "No supporting sources were retrieved.")
+    if (
+        context
+        and context.kb_profile == "olist_demo"
+        and re.search(r"\b[0-9a-fA-F]{32}\b", answer_text)
+    ):
+        return _unknown(
+            trace, "Internal dataset identifiers cannot appear in customer-facing answers."
+        )
+    if (
+        context
+        and context.kb_profile == "olist_demo"
+        and re.search(
+            r"\b(?:Olist(?:'s|’s)?|our|the merchant(?:'s|’s)?) (?:official |company )?(?:return|refund|warranty|cancellation|shipping) polic(?:y|ies) (?:is|are|allows?|requires?|provides?|offers?)\b",
+            answer_text,
+            re.IGNORECASE,
+        )
+    ):
+        return _unknown(
+            trace,
+            "No verified Olist merchant policy is available; general law is not merchant terms.",
+        )
 
     # Score confidence against the sources actually retrieved, then apply tau*.
     if settings.answer_mode == "extractive" and extractive:
@@ -395,8 +437,8 @@ def _finalize(
     )
 
 
-def _unknown(trace: Trace, reason: str) -> Decision:
-    text = (
+def _unknown(trace: Trace, reason: str, message: str | None = None) -> Decision:
+    text = message or (
         "I don't know based on the approved support information available. "
         "Please share more details, or ask for staff review if you'd like help from a person."
     )

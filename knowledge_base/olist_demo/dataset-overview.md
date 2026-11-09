@@ -1,3 +1,10 @@
+---
+title: Olist historical dataset scope
+profile: olist_transaction_profile
+source_kind: dataset_documentation
+content_version: 2
+---
+
 # Olist historical dataset demonstration
 
 This profile describes the Brazilian E-Commerce Public Dataset by Olist,

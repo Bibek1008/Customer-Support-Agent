@@ -89,12 +89,14 @@ class Repository:
         if count > (limit or get_settings().rate_limit_per_minute):
             raise RateLimitError()
 
-    def create_conversation(self, owner: str) -> str:
+    def create_conversation(self, owner: str, profile: str = "olist_demo") -> str:
+        if profile not in {"olist_demo", "office_store"}:
+            raise ValueError("Unknown conversation profile.")
         identifier = str(uuid4())
         with connection() as conn:
             conn.execute(
-                "INSERT INTO support_conversations(id,owner_hash) VALUES (%s,%s)",
-                (identifier, owner),
+                "INSERT INTO support_conversations(id,owner_hash,kb_profile) VALUES (%s,%s,%s)",
+                (identifier, owner, profile),
             )
         return identifier
 

@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Support Desk · Customer Support Agent</title>
+  <title>Brazilian E-Commerce Customer Support</title>
   <style>
     :root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#232c36;background:#f5f6f8;font-synthesis:none}
-    *{box-sizing:border-box}body{margin:0}button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.6}
+    *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}button,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.6}
     .layout{max-width:1140px;margin:auto;padding:38px 28px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:30px}
     .brand{font-weight:750;font-size:20px;letter-spacing:-.5px;display:flex;align-items:center;gap:12px}.logo{background:#6845c5;color:white;border-radius:12px;padding:10px 13px;font-size:17px}
     .status{font-size:13px;color:#65707e;display:flex;align-items:center;gap:8px}.dot{width:8px;height:8px;border-radius:50%;background:#9ba3af}.status[data-state=online] .dot{background:#21986b}.status[data-state=offline] .dot{background:#cd5656}
@@ -14,7 +14,7 @@
     h1{font-size:32px;line-height:1.2;letter-spacing:-1px;margin:14px 0}p{font-size:14px;line-height:1.7;color:#697381}.sidebar p{max-width:235px}
     .topics{margin:30px 0 20px;display:grid;gap:10px}.topic{text-align:left;border:1px solid #e0dce9;background:#fff;border-radius:10px;padding:13px 14px;font-size:13px;color:#4e3e71}.topic:hover{background:#f1ebfc;border-color:#c5b7e4}
     .olist-demo{margin:18px 0;padding:13px;border:1px solid #e1e3e8;border-radius:10px;background:#fff}.olist-demo summary{font-size:13px}.olist-demo p{font-size:11px;line-height:1.5;margin:8px 0}.olist-demo select{width:100%;padding:8px;border:1px solid #ddd;border-radius:7px;background:#fff}.olist-demo button{margin-top:8px;border:0;border-radius:7px;padding:8px 10px;background:#6845c5;color:#fff;font-size:12px}
-    .note{border-top:1px solid #e1e3e8;padding-top:16px;font-size:12px}.chat{background:#fff;border:1px solid #e1e4e9;border-radius:18px;box-shadow:0 8px 35px #20233506;overflow:hidden}
+    .note{border-top:1px solid #e1e3e8;padding-top:16px;font-size:12px}.chat{align-self:start;background:#fff;border:1px solid #e1e4e9;border-radius:18px;box-shadow:0 8px 35px #20233506;overflow:hidden}
     .chat-header{padding:21px 25px;border-bottom:1px solid #edf0f3;display:flex;justify-content:space-between;align-items:center}.chat-header strong{font-size:15px}.chat-header small{display:block;color:#7a8593;font-size:12px;margin-top:5px}
     .header-actions{display:flex;gap:8px}.clear{border:1px solid #e3e6ec;border-radius:8px;padding:8px 12px;background:white;font-size:12px;color:#67717e}
     .messages{height:480px;overflow-y:auto;padding:26px;display:flex;flex-direction:column;gap:22px;scroll-behavior:smooth}.message{max-width:94%;font-size:14px;line-height:1.75}.message .label{font-weight:650;color:#7d8591;font-size:11px;margin:0 0 7px;text-transform:uppercase;letter-spacing:.7px}.bubble{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f5f9;border-radius:3px 13px 13px;padding:15px 18px}
@@ -27,27 +27,34 @@
 </head>
 <body>
 <div class="layout">
-  <header class="top"><div class="brand"><span class="logo" aria-hidden="true">S</span>Support Desk</div><div class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></div></header>
+  <header class="top"><div class="brand"><span class="logo" aria-hidden="true">BR</span>Brazilian E-Commerce Customer Support</div><div class="status" id="status" role="status"><span class="dot"></span><span id="status-text">Connecting…</span></div></header>
   <main>
     <aside class="sidebar">
-      <div class="eyebrow">Your support assistant</div><h1>A little help.<br>A clear answer.</h1>
-      <p>Ask about returns, shipping, billing, or warranties. Get answers backed by our support documents.</p>
+      <div class="eyebrow">Historical Olist records</div><h1>Explore the record.<br>Understand your rights.</h1>
+      <p>Explore recorded purchases and general Brazilian consumer law.</p>
+      <details class="olist-demo" open><summary>Choose a historical customer profile</summary><p class="note">Public anonymized records from 2016-2018; profiles are not verified customer accounts.</p><p id="dataset-message" role="status">Checking dataset initialization.</p><select id="olist-account" aria-label="Choose a historical customer profile"><option value="">Loading profiles</option></select><button id="olist-select" type="button" disabled>Explore this profile</button><div id="sample-orders" aria-label="Available historical orders"></div></details>
       <div class="topics" aria-label="Suggested questions">
-        <button class="topic" data-question="What is your return policy?">Returns & refunds ↗</button>
-        <button class="topic" data-question="How long does standard shipping take?">Shipping & delivery ↗</button>
-        <button class="topic" data-question="How do I cancel my subscription?">Billing & subscriptions ↗</button>
-        <button class="topic" data-question="What does the product warranty cover?">Product warranty ↗</button>
+        <button class="topic" data-transaction="true" data-question="Show the historical delivery timeline for my most recent order.">View delivery timeline</button>
+        <button class="topic" data-transaction="true" data-question="Show my historical order history and purchase frequency.">View order history</button>
+        <button class="topic" data-transaction="true" data-question="Show every payment entry and installment count for my most recent order.">Ask about payment</button>
+        <button class="topic" data-transaction="true" data-question="Show the items and product details for my most recent historical order.">View product details</button>
+        <button class="topic" data-transaction="true" data-question="Summarize historical delivery performance, late orders and cancellations for my selected account.">Check delivery performance</button>
+        <button class="topic" data-question="What does general Brazilian consumer law say about online return rights and the withdrawal period?">Ask about return rights</button>
+        <button class="topic" data-question="What do verified Brazilian legal sources say about refunds? Explain the limits for historical records.">Ask about refunds</button>
+        <button class="topic" data-question="I have a product issue. What general Brazilian defect and warranty rights are documented?">Report a product issue</button>
+        <button class="topic" data-transaction="true" data-question="Show my historical customer feedback scores and dates.">View customer feedback</button>
       </div>
-      <details class="olist-demo"><summary>Try historical Olist data</summary><p>Public Brazilian marketplace records from 2016–2018. Choose a sample account to see only its historical records. No live tracking or order changes.</p><select id="olist-account" aria-label="Choose a historical demo account"><option value="">Loading demo accounts…</option></select><button id="olist-select" type="button">Start Olist demo chat</button></details>
-      <p class="note">When an answer needs a closer look, the assistant can hand your request to the support team.</p>
+
+      <p class="note">Legal sources provide general information; they do not establish a merchant policy or decide an individual case.</p>
+      <button class="clear" id="switch-profile" type="button">Open separate Office Store</button>
     </aside>
     <section class="chat" aria-label="Support chat">
-      <div class="chat-header"><div><strong>Let’s sort it out</strong><small>Saved securely · Staff replies appear here</small></div><div class="header-actions"><button class="clear" id="clear">New chat</button><button class="clear" id="end-session">End session</button></div></div>
+      <div class="chat-header"><div><strong id="chat-title">Historical records & consumer rights</strong><small>Historical transaction record · Official legal source · Demonstration assumption</small></div><div class="header-actions"><button class="clear" id="clear">New chat</button><button class="clear" id="end-session">End session</button></div></div>
       <div class="messages" id="messages" role="log" aria-live="polite" aria-label="Chat messages"></div>
       <form id="form"><div class="compose"><textarea id="question" aria-label="Your support question" placeholder="How can we help you today?" maxlength="4000" required></textarea><button class="send" id="send" type="submit">Send ↑</button></div><div class="hint">Enter to send · Shift + Enter for a new line · Sensitive identifiers are redacted before storage.</div></form>
     </section>
   </main>
-  <div class="footer"><span id="business-note">Demo Office Store · Fictional policies and demonstration orders</span> · <a href="/admin/inbox" target="_blank" rel="noopener">Staff inbox ↗</a></div>
+  <div class="footer"><span id="business-note">Independent application using anonymized Olist public historical records (2016-2018); not affiliated with Olist.</span> | <a href="https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce" target="_blank" rel="noopener">Dataset license: CC BY-NC-SA 4.0</a> | <a href="/admin/inbox" target="_blank" rel="noopener">Staff inbox</a></div>
 </div>
 <script>
   const messages = document.querySelector('#messages');
@@ -58,7 +65,9 @@
   let conversationId = null;
   let retryRequest = null;
   let lastMessageCount = 0;
-  let currentProfile = 'office_store';
+  let currentProfile = 'olist_demo';
+  let selectedAccount = null;
+  let datasetReady = false;
   async function api(url, options = {}) {
     const response = await fetch(url, {credentials:'same-origin', ...options});
     const data = await response.json().catch(() => ({}));
@@ -76,8 +85,19 @@
     }
     item.append(label, bubble); messages.append(item); messages.scrollTop = messages.scrollHeight; return item;
   }
-  function welcome() { addMessage('assistant', 'Hi! What can I help you with today? Choose a topic on the left, or type your support question below.'); }
-  function setBusy(value) { busy = value; send.disabled = value || !conversationId; input.disabled = value || !conversationId; document.querySelector('#clear').disabled = value; document.querySelectorAll('.topic').forEach(b => b.disabled = value); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
+  function welcome() { addMessage('assistant', currentProfile === 'olist_demo' ? 'Hi! I can help explore historical orders, payments, delivery records, product information and customer feedback, or find general Brazilian consumer-rights sources. Choose a historical customer profile for transaction lookups.' : 'Welcome to the separate Office Store experience. Its policies and orders are fictional and do not apply to Olist records.'); }
+  function renderProfile(orders = []) {
+    const olist = currentProfile === 'olist_demo';
+    document.querySelector('#business-note').textContent = olist ? 'Independent application using anonymized Olist public historical records (2016-2018); not affiliated with Olist.' : 'Separate Office Store · Fictional policies and demonstration orders';
+    document.querySelector('#chat-title').textContent = olist ? 'Historical records & consumer rights' : 'Separate Office Store';
+    document.querySelector('#switch-profile').textContent = olist ? 'Open separate Office Store' : 'Return to historical records';
+    document.querySelector('.olist-demo').hidden = !olist;
+    document.querySelector('.topics').hidden = !olist;
+    const samples = document.querySelector('#sample-orders'); samples.replaceChildren();
+    if (selectedAccount) { const label = document.createElement('p'); label.textContent = 'Selected historical profile'; samples.append(label); }
+    orders.forEach(order => { const button = document.createElement('button'); button.type = 'button'; button.textContent = order.reference + ' · ' + order.recorded_status + ' · ' + order.purchase_date; button.addEventListener('click', () => { if (!busy) { input.value = 'Show the historical order, items and delivery timeline for ' + order.reference; form.requestSubmit(); } }); samples.append(button); });
+  }
+  function setBusy(value) { busy = value; send.disabled = value || !conversationId; input.disabled = value || !conversationId; document.querySelector('#clear').disabled = value; document.querySelector('#switch-profile').disabled = value; document.querySelector('#olist-select').disabled = value || !datasetReady; document.querySelectorAll('.topic').forEach(b => b.disabled = value || (b.dataset.transaction && !selectedAccount)); send.textContent = value ? 'Thinking…' : 'Send ↑'; }
   function showDetails(item, data) {
     const meta = document.createElement('div'); meta.className = 'metadata';
     const unknown = !data.handoff && data.confidence === 0 && !data.citations?.length;
@@ -89,6 +109,10 @@
       for (const citation of data.citations) {
         const source = document.createElement('div'); source.className = 'source'; const title = document.createElement('strong'); title.textContent = citation.source_title || citation.source_id;
         const text = document.createElement('p'); text.textContent = citation.chunk; source.append(title, text);
+        const labels = {historical_transaction_record:'Historical transaction record',historical_dataset_aggregate:'Historical dataset aggregate',official_legal_source:'Official legal source',demonstration_assumption:'Demonstration assumption',dataset_documentation:'Dataset documentation'};
+        const provenance = document.createElement('p'); provenance.textContent = labels[citation.provenance] || 'Demonstration assumption';
+        if (citation.metadata?.jurisdiction) provenance.textContent += ' · Jurisdiction: ' + citation.metadata.jurisdiction + ' · ' + (citation.metadata.section || '');
+        source.prepend(provenance);
         if (citation.url && /^https?:\/\//i.test(citation.url)) { const link = document.createElement('a'); link.href = citation.url; link.textContent = 'Open source ↗'; link.target = '_blank'; link.rel = 'noopener noreferrer'; source.append(link); }
         details.append(source);
       }
@@ -102,7 +126,7 @@
     if (!sameRetry) addMessage('user', question);
     retryRequest = sameRetry ? retryRequest : {conversation_id:conversationId, message:question, request_id:crypto.randomUUID()};
     input.value = ''; setBusy(true);
-    const pending = addMessage('assistant', 'Checking the support documents…');
+    const pending = addMessage('assistant', 'Checking the available records and sources…');
     try {
       const data = await api('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(retryRequest), signal:AbortSignal.timeout(210000)});
       pending.remove(); const item = addMessage('assistant', data.answer || 'Your request has been received.'); showDetails(item, data);
@@ -115,31 +139,39 @@
   });
   input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); form.requestSubmit(); } });
   document.querySelectorAll('.topic').forEach(button => button.addEventListener('click', () => { input.value = button.dataset.question; form.requestSubmit(); }));
-  async function startNew() {
-    const data = await api('/api/conversations', {method:'POST'}); conversationId = data.conversation_id;
-    currentProfile = 'office_store'; localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren(); welcome();
+  async function startNew(profile = currentProfile) {
+    const data = await api('/api/conversations?profile=' + profile, {method:'POST'}); conversationId = data.conversation_id;
+    currentProfile = profile; selectedAccount = null; localStorage.setItem('support_profile', profile); localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren(); renderProfile(); welcome();
   }
   async function loadOlistAccounts() {
     const select = document.querySelector('#olist-account');
     try {
       const data = await api('/api/olist/accounts'); select.replaceChildren();
-      if (!data.accounts.length) { select.add(new Option('Olist demo is not initialized yet', '')); return; }
-      select.add(new Option('Choose a sample account', ''));
-      data.accounts.forEach(a => select.add(new Option(a.label, a.alias)));
-    } catch (_) { select.replaceChildren(new Option('Historical demo is unavailable', '')); }
+      datasetReady = data.status === 'ready' && data.accounts.length > 0;
+      document.querySelector('#dataset-message').textContent = data.message || 'Dataset initialization could not be verified.';
+      if (!datasetReady) { selectedAccount = null; renderProfile(); select.add(new Option('Historical profiles are not initialized', '')); select.disabled = true; return; }
+      select.disabled = false;
+      select.add(new Option('Choose a profile', ''));
+      data.accounts.forEach(a => select.add(new Option(a.label.replace(/^Historical demo customer /, 'Historical customer profile '), a.alias)));
+    } catch (_) { datasetReady = false; select.disabled = true; select.replaceChildren(new Option('Historical profiles are unavailable', '')); document.querySelector('#dataset-message').textContent = 'Dataset initialization could not be verified. Ask an administrator to complete setup.'; }
   }
   document.querySelector('#olist-select').addEventListener('click', async () => {
     const alias = document.querySelector('#olist-account').value;
     if (!alias || busy) return;
     setBusy(true);
     try {
-      const created = await api('/api/conversations', {method:'POST'});
+      const created = await api('/api/conversations?profile=olist_demo', {method:'POST'});
       const selected = await api('/api/conversations/' + created.conversation_id + '/demo-account', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({account_alias:alias})});
-      conversationId = created.conversation_id; currentProfile = 'olist_demo'; localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren();
-      addMessage('assistant', selected.disclosure + '\n\nSelected sample account: ' + alias + '. Use one of its order references below to ask about the recorded status, payment summary, or review score.');
-      selected.orders.forEach(order => addMessage('assistant', order.reference + ' · ' + order.recorded_status + ' · ' + order.purchase_date));
-      document.querySelector('#business-note').textContent = 'Olist historical data demo · 2016–2018 · Public research dataset';
+      conversationId = created.conversation_id; currentProfile = 'olist_demo'; selectedAccount = alias; localStorage.setItem('support_profile', 'olist_demo'); localStorage.setItem('support_conversation', conversationId); retryRequest = null; lastMessageCount = 0; messages.replaceChildren();
+      const profileLabel = document.querySelector('#olist-account').selectedOptions[0]?.textContent || 'historical profile'; addMessage('assistant', profileLabel + ' selected. Choose one of the recorded order references below to explore its timeline, items, payments or review score.');
+      renderProfile(selected.orders);
     } catch (error) { addMessage('error', error.message); }
+    finally { setBusy(false); }
+  });
+  document.querySelector('#switch-profile').addEventListener('click', async () => {
+    if (busy) return; setBusy(true);
+    try { await startNew(currentProfile === 'olist_demo' ? 'office_store' : 'olist_demo'); }
+    catch (error) { addMessage('error', error.message); }
     finally { setBusy(false); }
   });
   document.querySelector('#clear').addEventListener('click', async () => {
@@ -152,6 +184,7 @@
     try {
       await api('/api/session', {method:'DELETE'});
       localStorage.removeItem('support_conversation');
+      selectedAccount = null; renderProfile();
       conversationId = null;
       messages.replaceChildren();
       welcome();
@@ -175,13 +208,12 @@
     setBusy(true);
     try {
       const session = await api('/api/session', {method:'POST'});
-      document.querySelector('#business-note').textContent = session.business_name + (session.business_mode === 'demo' ? ' · Demonstration with fictional policies and orders' : ' · Support grounded in approved documents');
       const savedId = localStorage.getItem('support_conversation');
-      conversationId = session.conversations.find(c => c.id === savedId)?.id || session.conversations[0]?.id;
+      conversationId = session.conversations.find(c => c.id === savedId && (c.kb_profile === 'olist_demo' || localStorage.getItem('support_profile') === 'office_store'))?.id;
       if (!conversationId) await startNew();
-      else { const selection = await api('/api/conversations/' + conversationId + '/demo-account'); currentProfile = selection.profile; document.querySelector('#business-note').textContent = currentProfile === 'olist_demo' ? 'Olist historical data demo · 2016–2018 · Public research dataset' : session.business_name + (session.business_mode === 'demo' ? ' · Demonstration with fictional policies and orders' : ' · Support grounded in approved documents'); setBusy(false); await refreshHistory(true); }
-      loadOlistAccounts();
-      document.querySelector('#status').dataset.state = 'online'; document.querySelector('#status-text').textContent = 'Connected · Chats saved';
+      else { const selection = await api('/api/conversations/' + conversationId + '/demo-account'); currentProfile = selection.profile; selectedAccount = selection.account || null; renderProfile(selection.orders || []); setBusy(false); await refreshHistory(true); }
+      await loadOlistAccounts();
+      document.querySelector('#status').dataset.state = datasetReady ? 'online' : 'offline'; document.querySelector('#status-text').textContent = datasetReady ? 'Historical dataset ready · Chats saved' : 'Chat connected · Dataset not initialized';
     } catch (error) {
       document.querySelector('#status').dataset.state = 'offline'; document.querySelector('#status-text').textContent = 'Service unavailable'; addMessage('error', error.message);
     } finally { setBusy(false); if (!conversationId) { input.disabled = true; send.disabled = true; } }

@@ -31,6 +31,7 @@ class ToolOutcome:
     is_handoff: bool = False
     handoff_reason: str | None = None
     ticket_id: str | None = None
+    unavailable_reason: str | None = None
 
 
 # The tool definitions passed to the Anthropic Messages API.
@@ -141,7 +142,7 @@ TOOL_SCHEMAS: list[dict] = [
 OLIST_TOOL_SCHEMAS: list[dict] = [
     {
         "name": "olist_order_lookup",
-        "description": "Look up one historical order using a demo-order reference explicitly shown for the selected demo account. Never claim live tracking or perform a change.",
+        "description": "Look up one historical order using a displayed public reference for the selected historical profile. Never claim live tracking or perform a change.",
         "strict": True,
         "input_schema": {
             "type": "object",
@@ -159,7 +160,7 @@ OLIST_TOOL_SCHEMAS: list[dict] = [
     },
     {
         "name": "olist_order_history",
-        "description": "List up to 20 historical orders belonging to the selected Olist demo account.",
+        "description": "List up to 20 historical orders belonging to the selected public historical profile.",
         "strict": True,
         "input_schema": {
             "type": "object",
@@ -225,10 +226,118 @@ OLIST_TOOL_SCHEMAS: list[dict] = [
 ]
 
 
+def _olist_schema(name: str, description: str, argument: str | None = None) -> dict:
+    pattern = {
+        "order_reference": "^demo-order-[0-9]{6}$",
+        "product_reference": "^demo-product-[0-9]{5}$",
+        "seller_reference": "^demo-seller-[0-9]{5}$",
+    }
+    return {
+        "name": name,
+        "description": description,
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {argument: {"type": "string", "pattern": pattern[argument]}}
+            if argument
+            else {},
+            "required": [argument] if argument else [],
+            "additionalProperties": False,
+        },
+    }
+
+
+for _name, _description, _argument in [
+    (
+        "olist_order_items",
+        "All recorded items (up to 100), product/seller aliases, category, price and freight for an authorized order.",
+        "order_reference",
+    ),
+    (
+        "olist_installments",
+        "Each historical payment entry with method, value and installment count. No installment schedule is available.",
+        "order_reference",
+    ),
+    (
+        "olist_category_lookup",
+        "Translated product category and recorded dimensions/photo count for an account-associated product.",
+        "product_reference",
+    ),
+    (
+        "olist_historical_prices",
+        "Historical minimum, maximum and mean item price observed in the selected account, never current market prices.",
+        "product_reference",
+    ),
+    (
+        "olist_seller_info",
+        "Seller state and historical seller/order statistics limited to the selected account.",
+        "seller_reference",
+    ),
+    (
+        "olist_delivery_status",
+        "Historical purchase, approval, carrier handover, actual and estimated delivery timestamps.",
+        "order_reference",
+    ),
+    (
+        "olist_delivery_comparison",
+        "Estimated versus actual delivery difference and delay in calendar days. Missing dates remain unknown.",
+        "order_reference",
+    ),
+    (
+        "olist_delivery_performance",
+        "Selected-account aggregate delivery performance with comparable/late/missing counts and mean date difference.",
+        None,
+    ),
+    (
+        "olist_cancellation_statistics",
+        "Canceled and unavailable order counts within the selected account only.",
+        None,
+    ),
+    (
+        "olist_feedback_history",
+        "Selected-account historical review scores and creation/answer dates. No raw comments or policies.",
+        None,
+    ),
+    (
+        "olist_marketplace_summary",
+        "Historical dataset-wide order counts, cancellation and delivery rates, and average review score. Not current service performance.",
+        None,
+    ),
+    (
+        "olist_payment_distribution",
+        "Historical payment method counts and recorded amounts across the public dataset. No refunds or live charges.",
+        None,
+    ),
+    (
+        "olist_category_satisfaction",
+        "Historical category average scores from structured review ratings; categories with fewer than 100 review observations are suppressed. No comment analysis.",
+        None,
+    ),
+    (
+        "olist_regional_statistics",
+        "Historical order counts by Brazilian state; regions with fewer than 100 orders are suppressed and no customer location is returned.",
+        None,
+    ),
+]:
+    OLIST_TOOL_SCHEMAS.append(_olist_schema(_name, _description, _argument))
+
+POLICY_SCHEMA = {
+    "name": "consumer_policy",
+    "description": "Retrieve verified Brazilian consumer-law sources for return rights, withdrawal periods, refunds, defects, warranties, cancellation, delivery obligations or complaints. General law is not Olist company policy or a case-specific legal judgment.",
+    "strict": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "k": {"type": "integer"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+}
+
+
 def tool_schemas() -> list[dict]:
     context = current_request.get()
     return (
-        [*TOOL_SCHEMAS[:1], *OLIST_TOOL_SCHEMAS]
+        [*TOOL_SCHEMAS[:1], POLICY_SCHEMA, *OLIST_TOOL_SCHEMAS, TOOL_SCHEMAS[-1]]
         if context and context.kb_profile == "olist_demo"
         else TOOL_SCHEMAS
     )
@@ -277,11 +386,16 @@ class _DemoProduct(_Arguments):
     product_reference: str = Field(pattern=r"^demo-product-[0-9]{5}$")
 
 
+class _DemoSeller(_Arguments):
+    seller_reference: str = Field(pattern=r"^demo-seller-[0-9]{5}$")
+
+
 class _Empty(_Arguments):
     pass
 
 
 _VALIDATORS = {
+    "consumer_policy": _Search,
     "knowledge_base": _Search,
     "order_lookup": _Order,
     "read_ticket": _ReadTicket,
@@ -294,6 +408,17 @@ _VALIDATORS = {
     "olist_product_lookup": _DemoProduct,
     "olist_order_history": _Empty,
 }
+for _schema in OLIST_TOOL_SCHEMAS:
+    _args = _schema["input_schema"]["properties"]
+    _VALIDATORS[_schema["name"]] = (
+        _DemoOrder
+        if "order_reference" in _args
+        else _DemoProduct
+        if "product_reference" in _args
+        else _DemoSeller
+        if "seller_reference" in _args
+        else _Empty
+    )
 
 
 def dispatch(name: str, tool_input: dict) -> ToolOutcome:
@@ -304,6 +429,13 @@ def dispatch(name: str, tool_input: dict) -> ToolOutcome:
     """
     if name not in _VALIDATORS:
         return ToolOutcome(text="Unknown tool. Choose one of the available tools.")
+    context = current_request.get()
+    if (
+        context
+        and context.kb_profile == "olist_demo"
+        and name not in {s["name"] for s in tool_schemas()}
+    ):
+        return ToolOutcome(text="This tool is not available in the historical Olist profile.")
     try:
         tool_input = _VALIDATORS[name].model_validate(tool_input).model_dump(exclude_none=True)
     except ValidationError:
@@ -314,35 +446,94 @@ def dispatch(name: str, tool_input: dict) -> ToolOutcome:
         context = current_request.get()
         if context is None or context.kb_profile != "olist_demo" or not context.olist_account:
             return ToolOutcome(
-                text="The selected historical demo account is required for this lookup."
+                text="Choose a historical customer profile before looking up these records."
             )
         from support_agent.olist import queries
 
-        reference = tool_input.get("order_reference") or tool_input.get("product_reference")
+        reference = (
+            tool_input.get("order_reference")
+            or tool_input.get("product_reference")
+            or tool_input.get("seller_reference")
+        )
         handlers = {
             "olist_order_lookup": lambda: queries.order_lookup(tool_input["order_reference"]),
             "olist_order_history": queries.order_history,
-            "olist_product_lookup": lambda: queries.product_lookup(tool_input["product_reference"]),
-            "olist_payment_summary": lambda: queries.payment_summary(tool_input["order_reference"]),
+            "olist_product_lookup": lambda: queries.product_details(
+                tool_input["product_reference"]
+            ),
+            "olist_payment_summary": lambda: (
+                queries.payment_summary(tool_input["order_reference"])
+                + "\n"
+                + queries.payment_details(tool_input["order_reference"])
+            ),
             "olist_review_lookup": lambda: queries.review_lookup(tool_input["order_reference"]),
+            "olist_order_items": lambda: queries.order_items(reference),
+            "olist_installments": lambda: queries.payment_details(reference),
+            "olist_category_lookup": lambda: queries.product_details(reference),
+            "olist_historical_prices": lambda: queries.product_details(reference),
+            "olist_seller_info": lambda: queries.seller_info(reference),
+            "olist_delivery_status": lambda: queries.delivery_status(reference),
+            "olist_delivery_comparison": lambda: queries.delivery_status(reference),
+            "olist_delivery_performance": queries.delivery_performance,
+            "olist_cancellation_statistics": queries.delivery_performance,
+            "olist_feedback_history": queries.feedback_history,
+            "olist_marketplace_summary": queries.marketplace_summary,
+            "olist_payment_distribution": queries.payment_distribution,
+            "olist_category_satisfaction": queries.category_satisfaction,
+            "olist_regional_statistics": queries.regional_statistics,
         }
         result = handlers[name]()
         citations = []
         if result and not result.startswith("No ") and not result.startswith("Select "):
+            aggregate = name in {
+                "olist_marketplace_summary",
+                "olist_payment_distribution",
+                "olist_category_satisfaction",
+                "olist_regional_statistics",
+            }
             citations = [
                 Citation(
-                    source_id=f"olist:{reference or 'account-history'}",
-                    source_title="Olist historical dataset record",
+                    source_id=(
+                        "olist:public-dataset-aggregate"
+                        if aggregate
+                        else f"olist:{reference or 'account-history'}"
+                    ),
+                    source_title=(
+                        "Olist historical dataset aggregate"
+                        if aggregate
+                        else "Olist historical dataset record"
+                    ),
                     chunk=result,
                     score=1.0,
+                    provenance=(
+                        "historical_dataset_aggregate"
+                        if aggregate
+                        else "historical_transaction_record"
+                    ),
+                    profile="olist_transaction_profile",
                 )
             ]
         return ToolOutcome(text=result, citations=citations)
+    if name == "consumer_policy":
+        if context is None or context.kb_profile != "olist_demo":
+            return ToolOutcome(
+                text="Brazilian legal retrieval is available in the historical Olist experience."
+            )
+        result = knowledge_base.search_consumer_policy(**tool_input)
+        return ToolOutcome(
+            text=result.text,
+            citations=result.citations,
+            unavailable_reason=result.unavailable_reason,
+        )
     if name == "knowledge_base":
         result = knowledge_base.search_knowledge_base(
             query=tool_input["query"], k=int(tool_input.get("k", 4))
         )
-        return ToolOutcome(text=result.text, citations=result.citations)
+        return ToolOutcome(
+            text=result.text,
+            citations=result.citations,
+            unavailable_reason=result.unavailable_reason,
+        )
 
     if name == "order_lookup":
         result = order_lookup.lookup_order(tool_input["order_id"])

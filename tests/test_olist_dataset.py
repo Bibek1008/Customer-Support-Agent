@@ -41,7 +41,13 @@ def sample_dataset(olist_temp_dir):
         [{"product_category_name": "office", "product_category_name_english": "office"}],
     )
     customer_row = {c: "" for c in EXPECTED["customers"].split()}
-    customer_row.update(customer_id=customer, customer_unique_id=uid)
+    customer_row.update(
+        customer_id=customer,
+        customer_unique_id=uid,
+        customer_zip_code_prefix="01234",
+        customer_city="sao paulo",
+        customer_state="SP",
+    )
     _write(olist_temp_dir, "customers", [customer_row])
     product_row = {c: "" for c in EXPECTED["products"].split()}
     product_row.update(
@@ -54,7 +60,12 @@ def sample_dataset(olist_temp_dir):
     )
     _write(olist_temp_dir, "products", [product_row])
     seller_row = {c: "" for c in EXPECTED["sellers"].split()}
-    seller_row["seller_id"] = seller
+    seller_row.update(
+        seller_id=seller,
+        seller_zip_code_prefix="00123",
+        seller_city="sao paulo",
+        seller_state="SP",
+    )
     _write(olist_temp_dir, "sellers", [seller_row])
     order_row = {c: "" for c in EXPECTED["orders"].split()}
     order_row.update(
@@ -103,17 +114,31 @@ def sample_dataset(olist_temp_dir):
         review_comment_message="excluded",
     )
     _write(olist_temp_dir, "reviews", [review_row])
-    _write(olist_temp_dir, "geolocation", [{c: "" for c in EXPECTED["geolocation"].split()}])
+    _write(
+        olist_temp_dir,
+        "geolocation",
+        [
+            {
+                "geolocation_zip_code_prefix": "01046",
+                "geolocation_lat": "-23.5",
+                "geolocation_lng": "-46.6",
+                "geolocation_city": "sao paulo",
+                "geolocation_state": "SP",
+            }
+        ],
+    )
     return olist_temp_dir
 
 
-def test_validates_required_csvs_and_excludes_sensitive_columns(sample_dataset):
+def test_validates_required_csvs_and_marks_complete_sources_for_import(sample_dataset):
     report = validate(sample_dataset)
     assert report["errors"] == []
     assert report["tables"]["items"]["rows"] == 1
-    assert report["tables"]["geolocation"]["imported"] is False
+    assert report["tables"]["geolocation"]["selected_for_import"] is True
     assert "review_comment_message" in report["tables"]["reviews"]["columns"]
-    assert "review_comment_message" not in report["tables"]["reviews"]["import_columns"]
+    assert "review_comment_message" in report["tables"]["reviews"]["import_columns"]
+    assert "customer_city" in report["tables"]["customers"]["import_columns"]
+    assert "seller_city" in report["tables"]["sellers"]["import_columns"]
     assert report["fingerprint"]
 
 
@@ -131,9 +156,25 @@ def test_duplicate_order_keys_fail_validation(sample_dataset):
     assert "orders: invalid values or duplicate primary keys" in report["errors"]
 
 
+def test_import_mapping_keeps_location_fields_and_zip_leading_zeroes(sample_dataset):
+    from support_agent.olist.dataset import rows
+    from support_agent.olist.importer import _records, _records_geo
+    from support_agent.olist.schema import SCHEMA
+
+    customer = next(_records(sample_dataset, "customers"))
+    seller = next(_records(sample_dataset, "sellers"))
+    geo = _records_geo(next(rows(sample_dataset, "geolocation")))
+    assert customer[2] == "01234" and len(customer) == len(EXPECTED["customers"].split())
+    assert seller[1] == "00123" and len(seller) == len(EXPECTED["sellers"].split())
+    assert geo[0] == "01046"
+    assert "olist_demo.review_comments" in SCHEMA
+    assert "olist_demo.geolocation_raw" in SCHEMA
+    assert "olist_demo.geolocation_prefixes" in SCHEMA
+
+
 def test_olist_tool_rejects_missing_account_context():
     result = dispatch("olist_order_lookup", {"order_reference": "demo-order-000001"})
-    assert "selected historical demo account is required" in result.text
+    assert "Choose a historical customer profile" in result.text
 
 
 def test_olist_context_requires_selected_account():

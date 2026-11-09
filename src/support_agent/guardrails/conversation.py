@@ -1,4 +1,4 @@
-"""Model-based intent routing; no customer phrase or keyword matching."""
+"""Conservative local social routing, followed by model-based intent routing."""
 
 import json
 import re
@@ -68,6 +68,9 @@ without copying sensitive content.
 
 
 def classify_intent(text: str, history: list[Message]) -> IntentResult:
+    social = simple_social(text)
+    if social:
+        return IntentResult(intent=Intent.SOCIAL, phone_requested=False, reason=social)
     payload = json.dumps(
         {
             "history": [{"role": m.role.value, "content": m.content[:1200]} for m in history[-8:]],
@@ -115,10 +118,42 @@ def existing_handoff(history: list[Message]) -> str | None:
     return None
 
 
-def conversational_reply(result: IntentResult, history: list[Message]) -> str | None:
+def simple_social(text: str) -> str | None:
+    """Match the entire message. Any additional request falls through to routing."""
+    value = re.sub(r"[!?.,]+", " ", text.casefold()).strip()
+    value = " ".join(value.split())
+    if re.fullmatch(
+        r"(?:hi|hello|hey|oi|olá)(?: there)?(?: how are you(?: doing)?)?|how are you(?: doing)?",
+        value,
+    ):
+        return "greeting"
+    if re.fullmatch(r"(?:thanks|thank you|obrigado|obrigada)(?: so much| very much)?", value):
+        return "thanks"
+    return None
+
+
+def conversational_reply(
+    result: IntentResult, history: list[Message], text: str = ""
+) -> str | None:
+    from support_agent.request_context import current_request
+
+    context = current_request.get()
+    olist = context is not None and context.kb_profile == "olist_demo"
+    capabilities = (
+        "explore historical orders, payments, delivery records and customer feedback, "
+        "or find general Brazilian consumer-rights information"
+        if olist
+        else "help with orders, returns, shipping, billing, accounts and products"
+    )
+    if result.intent == Intent.SOCIAL:
+        if simple_social(text) == "thanks":
+            return "You're welcome! Let me know if you need anything else."
+        if "how are you" in text.casefold():
+            return f"Hi! I'm doing well, thanks. I can {capabilities}. What would you like to investigate?"
+        return f"Hi! I can {capabilities}. What can I help you with?"
     if result.intent == Intent.CLARIFY:
         return "Could you specify which product or support issue you mean, and what you'd like to know?"
-    if result.intent in {Intent.SOCIAL, Intent.OFF_TOPIC}:
+    if result.intent == Intent.OFF_TOPIC:
         return (
             "I'm here to help with store support: orders, returns, shipping, billing, "
             "accounts, and products. What can I help you with?"

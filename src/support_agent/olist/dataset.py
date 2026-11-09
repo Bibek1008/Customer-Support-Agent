@@ -9,18 +9,25 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-# Import only these fields, in dependency order. No location or review comments.
+# Import source fields in dependency order. Review comments are stored separately;
+# geolocation retains an auditable source-row table and a ZIP-prefix aggregate.
 TABLES = {
     "categories": (
         "product_category_name_translation.csv",
         "product_category_name product_category_name_english",
     ),
-    "customers": ("olist_customers_dataset.csv", "customer_id customer_unique_id"),
+    "customers": (
+        "olist_customers_dataset.csv",
+        "customer_id customer_unique_id customer_zip_code_prefix customer_city customer_state",
+    ),
     "products": (
         "olist_products_dataset.csv",
-        "product_id product_category_name product_weight_g product_length_cm product_height_cm product_width_cm",
+        "product_id product_category_name product_weight_g product_length_cm product_height_cm product_width_cm product_photos_qty product_name_lenght product_description_lenght",
     ),
-    "sellers": ("olist_sellers_dataset.csv", "seller_id"),
+    "sellers": (
+        "olist_sellers_dataset.csv",
+        "seller_id seller_zip_code_prefix seller_city seller_state",
+    ),
     "orders": (
         "olist_orders_dataset.csv",
         "order_id customer_id order_status order_purchase_timestamp order_approved_at order_delivered_carrier_date order_delivered_customer_date order_estimated_delivery_date",
@@ -35,7 +42,7 @@ TABLES = {
     ),
     "reviews": (
         "olist_order_reviews_dataset.csv",
-        "review_id order_id review_score review_creation_date review_answer_timestamp",
+        "review_id order_id review_score review_comment_title review_comment_message review_creation_date review_answer_timestamp",
     ),
 }
 EXPECTED = {
@@ -185,12 +192,13 @@ def validate(root: Path) -> dict:
                 "sha256": checksum,
                 "rows": count,
                 "columns": columns,
-                "import_columns": TABLES[table][1].split() if table in TABLES else [],
+                "import_columns": EXPECTED[table].split(),
                 "nulls": dict(nulls),
                 "invalid": dict(invalid),
                 "duplicate_primary_keys": duplicates,
                 "duplicate_rows": exact_duplicates,
-                "imported": table != "geolocation",
+                "selected_for_import": True,
+                "database_import_verified": False,
             }
             if duplicates or invalid:
                 result["errors"].append(f"{table}: invalid values or duplicate primary keys")

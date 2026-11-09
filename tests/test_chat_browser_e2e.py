@@ -74,7 +74,7 @@ def browser_page(web_origin):
 
         def mock_api(route):
             request = route.request
-            path = request.url.removeprefix(web_origin)
+            path = request.url.removeprefix(web_origin).split("?", 1)[0]
             if path == "/api/session" and request.method == "POST":
                 route.fulfill(
                     json={
@@ -87,7 +87,11 @@ def browser_page(web_origin):
                 route.fulfill(json={"conversation_id": "browser-test-conversation"})
             elif path == "/api/olist/accounts":
                 route.fulfill(
-                    json={"accounts": [{"alias": "demo-customer-01", "label": "Sample account 01"}]}
+                    json={
+                        "status": "ready",
+                        "message": "Historical accounts available.",
+                        "accounts": [{"alias": "demo-customer-01", "label": "Sample account 01"}],
+                    }
                 )
             elif path == "/api/session" and request.method == "DELETE":
                 route.fulfill(status=204, body="")
@@ -102,7 +106,7 @@ def browser_page(web_origin):
                             "account": "demo-customer-01",
                             "orders": [
                                 {
-                                    "reference": "OLIST-DEMO-ORDER-01",
+                                    "reference": "demo-order-000001",
                                     "recorded_status": "delivered",
                                     "purchase_date": "2018-01-01",
                                 }
@@ -146,16 +150,18 @@ def browser_page(web_origin):
                     route.fulfill(
                         json={
                             "conversation_id": request_body.get("conversation_id"),
-                            "answer": "Most items may be returned within 30 days.",
+                            "answer": "General Brazilian consumer law provides a seven-day withdrawal period for qualifying purchases; this is not Olist company policy.",
                             "confidence": 0.91,
                             "threshold": 0.65,
                             "handoff": False,
                             "citations": [
                                 {
                                     "source_id": "returns-policy",
-                                    "source_title": "Returns Policy",
-                                    "chunk": "Most items may be returned within 30 days.",
-                                    "url": None,
+                                    "source_title": "Brazilian Consumer Defense Code",
+                                    "chunk": "Article 49: seven-day withdrawal period for qualifying off-premises purchases.",
+                                    "url": "https://www2.camara.leg.br/",
+                                    "provenance": "official_legal_source",
+                                    "metadata": {"jurisdiction": "BR", "section": "Article 49"},
                                 }
                             ],
                         }
@@ -166,7 +172,7 @@ def browser_page(web_origin):
         page.route("**/api/**", mock_api)
         page.route("**/chat", mock_api)
         page.goto(web_origin + "/chat.html")
-        expect(page.locator("#status-text")).to_contain_text("Connected")
+        expect(page.locator("#status-text")).to_contain_text("Historical dataset ready")
         yield page
         browser.close()
 
@@ -177,10 +183,13 @@ def test_mobile_customer_can_send_and_open_cited_answer(browser_page):
     expect(page.get_by_role("button", name="New chat")).to_be_visible()
     page.get_by_role("textbox").fill("What is your return policy?")
     page.get_by_role("button", name="Send").click()
-    expect(page.get_by_text("Most items may be returned within 30 days.").first).to_be_visible()
+    expect(
+        page.get_by_text("General Brazilian consumer law provides", exact=False).first
+    ).to_be_visible()
     expect(page.get_by_text("Answered")).to_be_visible()
     page.get_by_text("View sources (1)").click()
-    expect(page.get_by_text("Returns Policy")).to_be_visible()
+    expect(page.get_by_text("Brazilian Consumer Defense Code")).to_be_visible()
+    expect(page.get_by_text("Official legal source", exact=False).last).to_be_visible()
 
 
 def test_chat_failure_keeps_message_for_retry(browser_page):
@@ -203,18 +212,56 @@ def test_ending_session_clears_local_conversation_and_disables_compose(browser_p
 
 def test_customer_can_select_only_the_mocked_olist_demo_account(browser_page):
     page = browser_page
-    page.get_by_text("Try historical Olist data").click()
-    select = page.get_by_label("Choose a historical demo account")
+    select = page.get_by_label("Choose a historical customer profile")
     expect(select.locator("option").nth(1)).to_have_text("Sample account 01")
     select.select_option("demo-customer-01")
-    page.get_by_role("button", name="Start Olist demo chat").click()
-    expect(
-        page.get_by_text("Selected sample account: demo-customer-01", exact=False)
-    ).to_be_visible()
-    expect(page.get_by_text("OLIST-DEMO-ORDER-01")).to_be_visible()
+    page.get_by_role("button", name="Explore this profile").click()
+    expect(page.get_by_text("Sample account 01 selected.", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="demo-order-000001", exact=False)).to_be_visible()
     assert (
         page.evaluate("localStorage.getItem('support_conversation')") == "browser-test-conversation"
     )
+
+
+def test_uninitialized_dataset_has_no_successful_connection_or_office_fallback(browser_page):
+    page = browser_page
+    page.route(
+        "**/api/olist/accounts",
+        lambda route: route.fulfill(
+            json={
+                "status": "not_initialized",
+                "accounts": [],
+                "message": "Olist dataset has not been initialized. Complete the approved data import before account selection.",
+            }
+        ),
+    )
+    page.reload()
+    expect(page.locator("#status-text")).to_contain_text("Dataset not initialized")
+    expect(page.get_by_role("button", name="Explore this profile")).to_be_disabled()
+    expect(page.locator("#dataset-message")).to_contain_text("data import")
+    expect(page.locator("#business-note")).to_contain_text("Independent application")
+    expect(page.get_by_role("button", name="View order history", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Ask about return rights")).to_be_enabled()
+
+
+def test_office_store_is_explicit_and_separate(browser_page):
+    page = browser_page
+    page.get_by_role("button", name="Open separate Office Store").click()
+    expect(page.locator("#business-note")).to_contain_text("Separate Office Store")
+    expect(page.locator(".topics")).to_be_hidden()
+    expect(page.locator(".olist-demo")).to_be_hidden()
+    page.get_by_role("button", name="Return to historical records").click()
+    expect(page.locator("#business-note")).to_contain_text("Independent application")
+    expect(page.locator(".olist-demo")).to_be_visible()
+
+
+def test_layout_mobile_and_desktop(browser_page):
+    page = browser_page
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(ROOT / ".cache" / "olist-mobile.png"), full_page=True)
+    page.set_viewport_size({"width": 1440, "height": 1050})
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    page.screenshot(path=str(ROOT / ".cache" / "olist-desktop.png"), full_page=True)
 
 
 def test_staff_inbox_requires_key_and_keeps_key_in_memory(browser_page):

@@ -49,6 +49,9 @@ class Citation(BaseModel):
     url: str | None = None
     chunk: str
     score: float = Field(ge=0.0, le=1.0, description="Retrieval similarity, 0..1")
+    provenance: str = "demonstration_assumption"
+    profile: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class TicketStatus(str, Enum):

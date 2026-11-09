@@ -11,6 +11,7 @@ import secrets
 import threading
 import time
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
@@ -23,7 +24,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from support_agent.config import get_settings
-from support_agent.db import DatabaseSchemaError, check_database, get_pool, migrate
+from support_agent.db import DatabaseSchemaError, check_database, get_pool
 from support_agent.guardrails.pii import get_redactor
 from support_agent.observability.audit import capture_events
 from support_agent.repository import (
@@ -58,15 +59,16 @@ def startup():
 
         validate_credentials()
     if settings.persistence_enabled:
-        if settings.app_env != "production":
-            migrate()
         check_database()
     if settings.app_env == "production":
         from support_agent.kb.store import get_store
 
         if not get_redactor()._presidio:
             raise RuntimeError("Production requires a functioning Presidio installation.")
-        if not get_store()._use_db or not get_store().count():
+        if not get_store()._use_db or any(
+            not get_store().count(profile=p)
+            for p in ("brazil_consumer_law", "olist_transaction_profile", "olist_demo_policy")
+        ):
             raise RuntimeError("Production requires an ingested PostgreSQL knowledge base.")
 
 
@@ -217,18 +219,21 @@ def end_session(request: Request, response: Response):
 
 
 @router.post("/api/conversations")
-def new_conversation(owner: str = Depends(require_owner)):
+def new_conversation(
+    profile: Literal["olist_demo", "office_store"] = "olist_demo",
+    owner: str = Depends(require_owner),
+):
     get_repository().check_rate(owner)
-    return {"conversation_id": get_repository().create_conversation(owner)}
+    return {"conversation_id": get_repository().create_conversation(owner, profile=profile)}
 
 
 @router.get("/api/olist/accounts")
 def olist_accounts(owner: str = Depends(require_owner)):
-    from support_agent.olist.queries import public_accounts
+    from support_agent.olist.queries import dataset_status
 
     return {
-        "accounts": public_accounts(),
-        "disclosure": "Curated demo identities over historical public data. This is not live customer information.",
+        **dataset_status(),
+        "disclosure": "Public anonymized historical profiles, not authenticated customer accounts or live customer data.",
     }
 
 
@@ -243,7 +248,7 @@ def select_olist_account(
     from support_agent.olist.queries import bind_account
 
     if not bind_account(str(conversation_id), owner, body.account_alias):
-        raise HTTPException(409, "Start a new chat and choose a valid demo account.")
+        raise HTTPException(409, "Start a new chat and choose a valid historical profile.")
     from support_agent.olist.queries import account_orders
 
     return {
@@ -303,8 +308,6 @@ def durable_chat(req, request, run_turn):
     lease_token = str(uuid4())
     fingerprint = hashlib.sha256((req.conversation_id + "\0" + req.message).encode()).hexdigest()
     profile, account_alias = repo.conversation_profile(req.conversation_id, owner)
-    if profile == "olist_demo" and not account_alias:
-        raise HTTPException(409, "Select a demo account before using Olist support.")
     cached = repo.begin_turn(
         req.conversation_id,
         owner,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import datetime
 from decimal import Decimal
@@ -19,9 +20,9 @@ from support_agent.olist.schema import migrate
 LIMIT_BYTES = 700_000_000
 FIELDS = {
     "categories": "product_category_name product_category_name_english",
-    "customers": "customer_id customer_unique_id",
-    "products": "product_id product_category_name product_weight_g product_length_cm product_height_cm product_width_cm",
-    "sellers": "seller_id",
+    "customers": TABLES["customers"][1],
+    "products": TABLES["products"][1],
+    "sellers": TABLES["sellers"][1],
     "orders": "order_id customer_id order_status order_purchase_timestamp order_approved_at order_delivered_carrier_date order_delivered_customer_date order_estimated_delivery_date",
     "items": "order_id order_item_id product_id seller_id shipping_limit_date price freight_value",
     "payments": "order_id payment_sequential payment_type payment_installments payment_value",
@@ -29,9 +30,9 @@ FIELDS = {
 }
 TARGETS = {
     "categories": "product_category_name,product_category_name_english",
-    "customers": "customer_id,customer_unique_id",
-    "products": "product_id,product_category_name,product_weight_g,product_length_cm,product_height_cm,product_width_cm",
-    "sellers": "seller_id",
+    "customers": TABLES["customers"][1].replace(" ", ","),
+    "products": TABLES["products"][1].replace(" ", ","),
+    "sellers": TABLES["sellers"][1].replace(" ", ","),
     "orders": "order_id,customer_id,order_status,order_purchase_timestamp,order_approved_at,order_delivered_carrier_date,order_delivered_customer_date,order_estimated_delivery_date",
     "items": "order_id,order_item_id,product_id,seller_id,shipping_limit_date,price,freight_value",
     "payments": "order_id,payment_sequential,payment_type,payment_installments,payment_value",
@@ -46,7 +47,15 @@ def _convert(column: str, value: str):
         return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
     if column in {"price", "freight_value", "payment_value"}:
         return Decimal(value)
-    if column in {"order_item_id", "payment_sequential", "payment_installments", "review_score"}:
+    if column in {
+        "order_item_id",
+        "payment_sequential",
+        "payment_installments",
+        "review_score",
+        "product_photos_qty",
+        "product_name_lenght",
+        "product_description_lenght",
+    }:
         return int(value)
     if column in {"product_weight_g", "product_length_cm", "product_height_cm", "product_width_cm"}:
         return Decimal(value)
@@ -62,6 +71,16 @@ def _records(root: Path, table: str):
         if table == "reviews":
             values.insert(0, rownum)
         yield tuple(values)
+
+
+def _records_geo(row: dict):
+    return (
+        row["geolocation_zip_code_prefix"],
+        float(row["geolocation_lat"]),
+        float(row["geolocation_lng"]),
+        row["geolocation_city"],
+        row["geolocation_state"],
+    )
 
 
 def _db_report(conn) -> dict:
@@ -84,21 +103,46 @@ def _db_report(conn) -> dict:
         """).fetchall()
     return {
         "database_bytes": database,
-        "olist_schema_bytes": schema["total"],
-        "olist_index_bytes": schema["indexes"],
-        "tables": tables,
+        "olist_schema_bytes": int(schema["total"]),
+        "olist_index_bytes": int(schema["indexes"]),
+        "tables": [
+            {
+                **table,
+                "total": int(table["total"]),
+                "indexes": int(table["indexes"]),
+                "heap": int(table["heap"]),
+            }
+            for table in tables
+        ],
         "free_budget_bytes": max(0, 1_000_000_000 - database),
     }
 
 
 def import_dataset(root: Path, *, limit_bytes: int = LIMIT_BYTES) -> dict:
-    report = validate(root)
+    from support_agent.olist.preflight import measure
+
+    report = measure(root)
     if report["errors"]:
         raise ValueError("Dataset validation failed: " + "; ".join(report["errors"]))
+    report["fingerprint"] = hashlib.sha256(
+        ("olist-v3:" + report["fingerprint"]).encode()
+    ).hexdigest()
     settings = get_settings()
     if not settings.persistence_enabled:
         raise RuntimeError("Set PERSISTENCE_ENABLED=1 for an explicit database import.")
     before = _db_report_connection(settings.database_url)
+    from support_agent.olist.preflight import base_estimates
+
+    heap, indexes, _ = base_estimates(report)
+    geo_rows = int(report["tables"]["geolocation"]["rows"])
+    # Conservative planning allowance for separately stored comments, raw
+    # geolocation and its prefix aggregate; actual post-load size is enforced.
+    optional_tables = int(report["storage"]["review_comment_pg_estimate_bytes"])
+    optional_tables += geo_rows * 160 + int(report["storage"]["geolocation_zip_prefixes"]) * 160
+    if before["database_bytes"] + int((heap + indexes) * 1.5) + optional_tables > limit_bytes:
+        raise RuntimeError(
+            "Projected import exceeds the 700 MB target; obtain a new storage plan before importing."
+        )
     if before["database_bytes"] >= limit_bytes:
         raise RuntimeError("Database already exceeds the Olist storage budget; import stopped.")
     conn = psycopg.connect(settings.database_url, autocommit=False, connect_timeout=10)
@@ -128,7 +172,10 @@ def import_dataset(root: Path, *, limit_bytes: int = LIMIT_BYTES) -> dict:
                     }[table]
                     target = "olist_demo." + table
                 placeholders = ",".join(["%s"] * len(colnames))
-                sql = f"INSERT INTO {target} ({cols}) VALUES ({placeholders}) ON CONFLICT ({conflict}) DO NOTHING"
+                updates = ",".join(
+                    f"{c}=EXCLUDED.{c}" for c in colnames if c not in conflict.split(",")
+                )
+                sql = f"INSERT INTO {target} ({cols}) VALUES ({placeholders}) ON CONFLICT ({conflict}) DO UPDATE SET {updates}"
                 with conn.cursor() as cur:
                     batch = []
                     for record in _records(root, table):
@@ -138,6 +185,65 @@ def import_dataset(root: Path, *, limit_bytes: int = LIMIT_BYTES) -> dict:
                             batch.clear()
                     if batch:
                         cur.executemany(sql, batch)
+            # Keep raw feedback in a separate, restricted table. No customer
+            # query, RAG profile or response tool reads this text.
+            from support_agent.olist.dataset import rows
+
+            with conn.cursor() as cur:
+                batch = []
+                for source_row, row in enumerate(rows(root, "reviews")):
+                    if row["review_comment_title"] or row["review_comment_message"]:
+                        batch.append(
+                            (
+                                source_row,
+                                row["review_comment_title"] or None,
+                                row["review_comment_message"] or None,
+                            )
+                        )
+                    if len(batch) >= 1000:
+                        cur.executemany(
+                            "INSERT INTO olist_demo.review_comments(source_row,review_comment_title,review_comment_message) VALUES(%s,%s,%s) ON CONFLICT(source_row) DO UPDATE SET review_comment_title=EXCLUDED.review_comment_title,review_comment_message=EXCLUDED.review_comment_message",
+                            batch,
+                        )
+                        batch.clear()
+                if batch:
+                    cur.executemany(
+                        "INSERT INTO olist_demo.review_comments(source_row,review_comment_title,review_comment_message) VALUES(%s,%s,%s) ON CONFLICT(source_row) DO UPDATE SET review_comment_title=EXCLUDED.review_comment_title,review_comment_message=EXCLUDED.review_comment_message",
+                        batch,
+                    )
+                batch = []
+                for source_row, row in enumerate(rows(root, "geolocation")):
+                    batch.append((source_row, *_records_geo(row)))
+                    if len(batch) >= 2000:
+                        cur.executemany(
+                            "INSERT INTO olist_demo.geolocation_raw(source_row,geolocation_zip_code_prefix,geolocation_lat,geolocation_lng,geolocation_city,geolocation_state) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(source_row) DO UPDATE SET geolocation_zip_code_prefix=EXCLUDED.geolocation_zip_code_prefix,geolocation_lat=EXCLUDED.geolocation_lat,geolocation_lng=EXCLUDED.geolocation_lng,geolocation_city=EXCLUDED.geolocation_city,geolocation_state=EXCLUDED.geolocation_state",
+                            batch,
+                        )
+                        batch.clear()
+                if batch:
+                    cur.executemany(
+                        "INSERT INTO olist_demo.geolocation_raw(source_row,geolocation_zip_code_prefix,geolocation_lat,geolocation_lng,geolocation_city,geolocation_state) VALUES(%s,%s,%s,%s,%s,%s) ON CONFLICT(source_row) DO UPDATE SET geolocation_zip_code_prefix=EXCLUDED.geolocation_zip_code_prefix,geolocation_lat=EXCLUDED.geolocation_lat,geolocation_lng=EXCLUDED.geolocation_lng,geolocation_city=EXCLUDED.geolocation_city,geolocation_state=EXCLUDED.geolocation_state",
+                        batch,
+                    )
+            conn.execute("DELETE FROM olist_demo.geolocation_prefixes")
+            conn.execute("""
+                INSERT INTO olist_demo.geolocation_prefixes
+                    (geolocation_zip_code_prefix,point_count,unique_point_count,centroid_lat,centroid_lng,source_states)
+                WITH unique_points AS (
+                    SELECT DISTINCT geolocation_zip_code_prefix,geolocation_lat,geolocation_lng
+                    FROM olist_demo.geolocation_raw
+                ), raw_counts AS (
+                    SELECT geolocation_zip_code_prefix,count(*) AS point_count
+                    FROM olist_demo.geolocation_raw GROUP BY geolocation_zip_code_prefix
+                ), states AS (
+                    SELECT geolocation_zip_code_prefix,array_agg(DISTINCT geolocation_state ORDER BY geolocation_state) AS source_states
+                    FROM olist_demo.geolocation_raw GROUP BY geolocation_zip_code_prefix
+                )
+                SELECT u.geolocation_zip_code_prefix,r.point_count,count(*),avg(u.geolocation_lat),avg(u.geolocation_lng),s.source_states
+                FROM unique_points u JOIN raw_counts r USING(geolocation_zip_code_prefix)
+                JOIN states s USING(geolocation_zip_code_prefix)
+                GROUP BY u.geolocation_zip_code_prefix,r.point_count,s.source_states
+            """)
             # Deterministic opaque aliases contain no source IDs and are useful
             # only after a user selects a curated account in this conversation.
             conn.execute("""
@@ -160,6 +266,12 @@ def import_dataset(root: Path, *, limit_bytes: int = LIMIT_BYTES) -> dict:
                 FROM (SELECT product_id,row_number() OVER(ORDER BY product_id) n FROM olist_demo.products) ranked
                 ON CONFLICT DO NOTHING
             """)
+            conn.execute("""
+                INSERT INTO olist_demo.seller_aliases(alias,seller_id)
+                SELECT 'demo-seller-'||lpad(n::text,5,'0'),seller_id
+                FROM (SELECT seller_id,row_number() OVER(ORDER BY seller_id) n FROM olist_demo.sellers) ranked
+                ON CONFLICT DO NOTHING
+            """)
             current = _db_report(conn)
             if current["database_bytes"] > limit_bytes:
                 raise RuntimeError(
@@ -168,6 +280,9 @@ def import_dataset(root: Path, *, limit_bytes: int = LIMIT_BYTES) -> dict:
             conn.execute(
                 "INSERT INTO olist_demo.imports(fingerprint,report) VALUES(%s,%s)",
                 (report["fingerprint"], Jsonb(report)),
+            )
+            conn.execute(
+                "INSERT INTO olist_demo.release_versions(version) VALUES(3) ON CONFLICT DO NOTHING"
             )
         after = _db_report(conn)
     finally:

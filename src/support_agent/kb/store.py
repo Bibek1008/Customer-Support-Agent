@@ -73,8 +73,6 @@ class VectorStore:
             self._conn = psycopg.connect(
                 self.settings.database_url, autocommit=True, connect_timeout=10
             )
-            if self.settings.app_env != "production":
-                self._ensure_schema()
             register_vector(self._conn)
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -225,17 +223,31 @@ class VectorStore:
             if (
                 chunk.profile,
                 chunk.source_id,
-                self.settings.embedding_provider,
-                self.settings.embedding_model,
+                chunk.metadata.get("embedding_provider"),
+                chunk.metadata.get("embedding_model"),
             ) in sources:
                 chunk.active = False
         existing = {
-            (chunk.profile, chunk.source_id, self._content_hash(chunk.text)): index
+            (
+                chunk.profile,
+                chunk.source_id,
+                chunk.metadata.get("embedding_provider"),
+                chunk.metadata.get("embedding_model"),
+                self._content_hash(chunk.text),
+            ): index
             for index, chunk in enumerate(self._memory)
         }
         for chunk in chunks:
+            chunk.metadata.setdefault("embedding_provider", self.settings.embedding_provider)
+            chunk.metadata.setdefault("embedding_model", self.settings.embedding_model)
             chunk.active = True
-            key = (chunk.profile, chunk.source_id, self._content_hash(chunk.text))
+            key = (
+                chunk.profile,
+                chunk.source_id,
+                chunk.metadata["embedding_provider"],
+                chunk.metadata["embedding_model"],
+                self._content_hash(chunk.text),
+            )
             if key in existing:
                 self._memory[existing[key]] = chunk
             else:
@@ -256,14 +268,16 @@ class VectorStore:
                 chunk.active = False
 
     # --- reads ----------------------------------------------------------------
-    def search(self, query_embedding: list[float], k: int = 4) -> list[Retrieved]:
+    def search(
+        self, query_embedding: list[float], k: int = 4, *, profile: str | None = None
+    ) -> list[Retrieved]:
         """Return the ``k`` nearest chunks with a cosine similarity score."""
         if self._use_db:
-            return self._search_db(query_embedding, k)
-        return self._search_memory(query_embedding, k)
+            return self._search_db(query_embedding, k, profile)
+        return self._search_memory(query_embedding, k, profile)
 
-    def _search_db(self, q: list[float], k: int) -> list[Retrieved]:
-        profile = self._profile()
+    def _search_db(self, q: list[float], k: int, profile: str | None = None) -> list[Retrieved]:
+        profile = profile or self._profile()
         with self._cursor() as cur:
             # 1 - cosine_distance = cosine_similarity, clamped to [0, 1].
             cur.execute(
@@ -291,7 +305,7 @@ class VectorStore:
             for r in rows
         ]
 
-    def _search_memory(self, q: list[float], k: int) -> list[Retrieved]:
+    def _search_memory(self, q: list[float], k: int, profile: str | None = None) -> list[Retrieved]:
         def cosine(a: list[float], b: list[float]) -> float:
             # Vectors are stored L2-normalized, so cosine is the dot product.
             return sum(x * y for x, y in zip(a, b))
@@ -304,9 +318,13 @@ class VectorStore:
                 text=c.text,
                 score=max(0.0, min(1.0, cosine(q, c.embedding))),
                 metadata=c.metadata,
+                profile=c.profile,
             )
             for c in self._memory
-            if c.active and c.profile == self._profile()
+            if c.active
+            and c.profile == (profile or self._profile())
+            and c.metadata.get("embedding_provider") == self.settings.embedding_provider
+            and c.metadata.get("embedding_model") == self.settings.embedding_model
         ]
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[:k]
@@ -327,7 +345,13 @@ class VectorStore:
                     (profile, self.settings.embedding_model, self.settings.embedding_provider),
                 )
                 return int(cur.fetchone()[0])
-        return sum(chunk.active and chunk.profile == profile for chunk in self._memory)
+        return sum(
+            chunk.active
+            and chunk.profile == profile
+            and chunk.metadata.get("embedding_provider") == self.settings.embedding_provider
+            and chunk.metadata.get("embedding_model") == self.settings.embedding_model
+            for chunk in self._memory
+        )
 
 
 _STORE: VectorStore | None = None
