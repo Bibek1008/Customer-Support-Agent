@@ -82,9 +82,22 @@ class PIIRedactor:
     def _try_load_presidio(self) -> bool:
         try:
             from presidio_analyzer import AnalyzerEngine
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
             from presidio_anonymizer import AnonymizerEngine
 
-            self._analyzer = AnalyzerEngine()
+            # Presidio's default configuration selects en_core_web_lg (about
+            # 400 MB) and tries to download it at startup when absent. Use the
+            # small model installed by the Render build instead, avoiding an
+            # unexpected runtime download and memory spike on small instances.
+            provider = NlpEngineProvider(
+                nlp_configuration={
+                    "nlp_engine_name": "spacy",
+                    "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+                }
+            )
+            self._analyzer = AnalyzerEngine(
+                nlp_engine=provider.create_engine(), supported_languages=["en"]
+            )
             self._anonymizer = AnonymizerEngine()
             return True
         except Exception as exc:  # noqa: BLE001 - detector setup must fall back safely
@@ -128,11 +141,22 @@ class PIIRedactor:
         results = [
             result
             for result in results
-            if not self._is_known_false_positive(
-                text,
-                result.entity_type,
-                result.start,
-                result.end,
+            if (
+                not self._is_known_false_positive(
+                    text,
+                    result.entity_type,
+                    result.start,
+                    result.end,
+                )
+                # The small spaCy model frequently labels ordinary words and
+                # acronyms as organizations. Company names aren't personal
+                # identifiers, so rely on Presidio's pattern recognizers for
+                # concrete PII rather than redacting these noisy NER results.
+                and not (
+                    result.entity_type == "ORGANIZATION"
+                    and (result.recognition_metadata or {}).get("recognizer_name")
+                    == "SpacyRecognizer"
+                )
             )
         ]
         entities = [r.entity_type for r in results]

@@ -1,6 +1,6 @@
 # Render Native Python deployment
 
-The repository blueprint is `render.yaml`. It defines one native Python web service, pins Python to 3.12 via `.python-version`, installs the spaCy English model required for production Presidio checks, uses a bounded single-worker runtime and `/healthz`, and configures PostgreSQL persistence, Groq generation and safety, FastEmbed `BAAI/bge-small-en-v1.5` at 384 dimensions, and Langfuse tracing tagged as `production`. Answers use the verified extractive mode.
+The repository blueprint is `render.yaml`. It defines one native Python web service, pins Python to 3.12 via `.python-version`, installs spaCy's small English model and configures Presidio to use it (avoiding the default 400 MB large model download at startup), uses a bounded single-worker runtime and `/healthz`, and configures PostgreSQL persistence, Groq generation and safety, FastEmbed `BAAI/bge-small-en-v1.5` at 384 dimensions, and Langfuse tracing tagged as `production`. Answers use the verified extractive mode.
 
 Before creating or updating a Render service, configure `DATABASE_URL`, the final HTTPS `APP_ORIGIN`, `GROQ_API_KEY`, distinct random `ADMIN_API_KEY` and `SERVICE_API_KEY` values of at least 32 characters, and `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` in Render's environment settings. The blueprint marks these as secret/manual values. Do not put credentials in `render.yaml`, source files, or browser code.
 

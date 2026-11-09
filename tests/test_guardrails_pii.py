@@ -3,10 +3,50 @@
 from __future__ import annotations
 
 import logging
+import sys
+from types import ModuleType
 
 import pytest
 
 from support_agent.guardrails.pii import get_redactor
+
+
+def test_presidio_uses_the_small_installed_spacy_model(monkeypatch):
+    from support_agent.guardrails.pii import PIIRedactor
+
+    observed = {}
+    engine = object()
+
+    class Provider:
+        def __init__(self, *, nlp_configuration):
+            observed["configuration"] = nlp_configuration
+
+        def create_engine(self):
+            return engine
+
+    class Analyzer:
+        def __init__(self, *, nlp_engine, supported_languages):
+            observed["engine"] = nlp_engine
+            observed["languages"] = supported_languages
+
+    presidio = ModuleType("presidio_analyzer")
+    presidio.AnalyzerEngine = Analyzer
+    nlp_engine = ModuleType("presidio_analyzer.nlp_engine")
+    nlp_engine.NlpEngineProvider = Provider
+    anonymizer = ModuleType("presidio_anonymizer")
+    anonymizer.AnonymizerEngine = object
+    monkeypatch.setitem(sys.modules, "presidio_analyzer", presidio)
+    monkeypatch.setitem(sys.modules, "presidio_analyzer.nlp_engine", nlp_engine)
+    monkeypatch.setitem(sys.modules, "presidio_anonymizer", anonymizer)
+
+    redactor = PIIRedactor.__new__(PIIRedactor)
+    assert redactor._try_load_presidio()
+
+    assert observed["configuration"]["models"] == [
+        {"lang_code": "en", "model_name": "en_core_web_sm"}
+    ]
+    assert observed["engine"] is engine
+    assert observed["languages"] == ["en"]
 
 
 def test_email_and_card_are_redacted():

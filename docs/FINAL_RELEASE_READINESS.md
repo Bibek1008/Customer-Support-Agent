@@ -10,12 +10,12 @@ Olist routes, transaction tools, account mapping, Olist UI, and Olist source mod
 
 ## Verification
 
-- Complete test suite after the return-policy fallback and migration-startup fixes: **173 passed, 3 skipped**. The three skips are the PostgreSQL integration tests, which require an explicitly enabled integration database. Hosted safety and tracing were disabled for the test run; no model inference ran.
+- Complete test suite after the return-policy fallback, migration-startup, and Render PII-model fixes: **174 passed, 3 skipped**. The three skips are the PostgreSQL integration tests, which require an explicitly enabled integration database. Hosted safety and tracing were disabled for the test run; no model inference ran.
 - Ruff lint: clean across `eval`, `src`, `tests`, and `ops`.
 - Ruff formatter: all 84 Python files in those directories pass. Only the 11 files reported by the requested formatter check were reformatted.
 - `.env.example`: all 10 secret-key entries are empty or obvious placeholders; the database URL uses `USER:PASSWORD@HOST:5432/DATABASE`. The existing `.env` remains present and git-ignored; its contents were not printed or changed.
 - The website's exact suggested question, “What is your return policy?”, retrieves `returns-policy` first with a citation from the configured Neon store. Three recent saved turns had no knowledge-base tool call and therefore abstained without citations. The agent now performs a read-only retrieval fallback when a model finishes without using the knowledge-base tool; it only returns the matched source excerpt after the normal relevance and confidence checks. No source match still yields the existing unknown response.
-- Render YAML: native Python runtime, locked dependency install, bounded single-worker start command, and `/healthz` check are configured. Production values and secret checklist are described in `docs/RENDER_DEPLOYMENT.md`.
+- Render YAML: native Python 3.12 runtime, locked dependency install, bounded single-worker start command, and `/healthz` check are configured. Presidio explicitly uses the installed spaCy small English model to avoid an automatic 400 MB model download during startup; noisy organization-only NER results are ignored. Production values and secret checklist are described in `docs/RENDER_DEPLOYMENT.md`.
 
 ## Database startup incident
 
