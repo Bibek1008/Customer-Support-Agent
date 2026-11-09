@@ -63,9 +63,10 @@ class ToneVerdict:
 
 def judge_hallucination(answer: str, citations: list[Citation]) -> HallucinationVerdict:
     """Flag claims in ``answer`` not supported by ``citations`` (RAGTruth-style)."""
-    sources = "\n\n".join(
-        f"[{i + 1}] {c.source_title}: {c.chunk}" for i, c in enumerate(citations)
-    ) or "(no sources were retrieved)"
+    sources = (
+        "\n\n".join(f"[{i + 1}] {c.source_title}: {c.chunk}" for i, c in enumerate(citations))
+        or "(no sources were retrieved)"
+    )
 
     system = (
         "You are a grounding auditor for a support agent. "

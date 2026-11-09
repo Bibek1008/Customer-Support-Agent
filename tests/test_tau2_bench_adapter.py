@@ -9,12 +9,7 @@ import pytest
 from eval.tau2_bench_adapter import build_command, load_test_split
 
 _DATA_DIR = (
-    Path(__file__).resolve().parents[1]
-    / "external"
-    / "benchmarks"
-    / "tau2-bench"
-    / "data"
-    / "tau2"
+    Path(__file__).resolve().parents[1] / "external" / "benchmarks" / "tau2-bench" / "data" / "tau2"
 )
 
 

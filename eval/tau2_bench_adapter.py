@@ -109,12 +109,8 @@ def run(
 ) -> Path:
     selected_data = _data_dir(data_dir)
     test_ids = load_test_split(selected_data, domain)
-    agent_model = agent_llm or os.environ.get(
-        "TAU2_AGENT_LLM", "openai/gpt-4.1-2025-04-14"
-    )
-    user_model = user_llm or os.environ.get(
-        "TAU2_USER_LLM", "openai/gpt-4.1-2025-04-14"
-    )
+    agent_model = agent_llm or os.environ.get("TAU2_AGENT_LLM", "openai/gpt-4.1-2025-04-14")
+    user_model = user_llm or os.environ.get("TAU2_USER_LLM", "openai/gpt-4.1-2025-04-14")
     result_dir = _RESULTS / domain / "test"
     command = build_command(
         domain=domain,

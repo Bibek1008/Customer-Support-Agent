@@ -44,7 +44,7 @@ def _run(domain: str, k: int) -> None:
         # https://github.com/sierra-research/tau-bench
         from tau_bench.envs import get_env  # type: ignore
         from tau_bench.run import run_pass_k  # type: ignore
-    except Exception:
+    except ImportError:
         raise SystemExit(
             "tau-bench is not installed. Install it from "
             "https://github.com/sierra-research/tau-bench to run this cross-check. "

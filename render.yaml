@@ -41,6 +41,8 @@ services:
         value: "384"
       - key: DATABASE_URL
         sync: false
+      - key: APP_ORIGIN
+        sync: false
       - key: ADMIN_API_KEY
         sync: false
       - key: SERVICE_API_KEY
@@ -49,10 +51,8 @@ services:
         value: "0"
       - key: TRACING_ENABLED
         value: "1"
-      - key: LANGFUSE_SAMPLE_RATE
-        value: "1.0"
-      - key: LANGFUSE_MONTHLY_TRACE_BUDGET
-        value: "1000"
+      - key: LANGFUSE_TRACING_ENVIRONMENT
+        value: production
       - key: LANGFUSE_PUBLIC_KEY
         sync: false
       - key: LANGFUSE_SECRET_KEY

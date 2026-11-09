@@ -99,7 +99,9 @@ def score_confidence(question: str, answer: str, citations: list[Citation]) -> C
             )
         except GroqOutputError:
             # An unscored answer must never pass the confidence gate.
-            return ConfidenceResult(score=0.0, reason="Confidence scoring failed; human review required.")
+            return ConfidenceResult(
+                score=0.0, reason="Confidence scoring failed; human review required."
+            )
         cost = cost_from_usage(kwargs["model"], resp.usage)
         span.record_cost(cost)
         span.record_response(resp)
@@ -110,14 +112,23 @@ def score_confidence(question: str, answer: str, citations: list[Citation]) -> C
         if not isinstance(data, dict):
             raise TypeError("Expected a confidence object")
         value = data.get("confidence")
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
             raise ValueError("Expected a finite confidence number")
         score = max(0.0, min(1.0, float(value)))
     except (ValueError, TypeError):
         return ConfidenceResult(
-            score=0.0, reason="Invalid confidence score; human review required.", cost_usd=cost.usd, cost_record=cost
+            score=0.0,
+            reason="Invalid confidence score; human review required.",
+            cost_usd=cost.usd,
+            cost_record=cost,
         )
-    return ConfidenceResult(score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd, cost_record=cost)
+    return ConfidenceResult(
+        score=score, reason=str(data.get("reason", "")), cost_usd=cost.usd, cost_record=cost
+    )
 
 
 def decide_handoff(confidence: float, threshold: float | None = None) -> HandoffDecision:

@@ -22,8 +22,6 @@ production-support-agent/
   pyproject.toml                   Python 3.12 project; deps: anthropic, fastapi, pgvector, presidio, opentelemetry.
   .env.example                     Every env var the system reads; real secrets never committed.
   Makefile                         ingest / serve / eval / test one-liners.
-  docker-compose.yml               Postgres+pgvector, Llama Guard 4 model server, OTel collector, Langfuse.
-
   src/support_agent/
     __init__.py
     config.py                      Env-only settings via pydantic-settings; no hardcoded secrets.
