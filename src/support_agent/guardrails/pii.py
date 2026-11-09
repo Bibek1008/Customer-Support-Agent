@@ -17,10 +17,12 @@ import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.util import find_spec
 
 from support_agent.observability.tracing import guardrail_span
 
 _LOGGER = logging.getLogger(__name__)
+_PRESIDIO_SPACY_MODEL = "en_core_web_sm"
 
 # High-precision fallback patterns, used only when Presidio is unavailable.
 _FALLBACK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -81,18 +83,25 @@ class PIIRedactor:
 
     def _try_load_presidio(self) -> bool:
         try:
+            # Presidio's SpacyNlpEngine downloads missing models during load.
+            # Check before constructing it so startup never performs a model
+            # install; production startup will fail its existing Presidio
+            # requirement if the Render build omitted this small package.
+            if find_spec(_PRESIDIO_SPACY_MODEL) is None:
+                raise RuntimeError("Install en_core_web_sm during the build before startup.")
+
             from presidio_analyzer import AnalyzerEngine
             from presidio_analyzer.nlp_engine import NlpEngineProvider
             from presidio_anonymizer import AnonymizerEngine
 
-            # Presidio's default configuration selects en_core_web_lg (about
-            # 400 MB) and tries to download it at startup when absent. Use the
-            # small model installed by the Render build instead, avoiding an
+            # Presidio's default configuration selects a roughly 400 MB model
+            # and tries to download it at startup when absent. Use the small
+            # model installed by the Render build instead, avoiding an
             # unexpected runtime download and memory spike on small instances.
             provider = NlpEngineProvider(
                 nlp_configuration={
                     "nlp_engine_name": "spacy",
-                    "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}],
+                    "models": [{"lang_code": "en", "model_name": _PRESIDIO_SPACY_MODEL}],
                 }
             )
             self._analyzer = AnalyzerEngine(

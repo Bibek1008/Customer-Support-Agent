@@ -268,8 +268,8 @@ Section 4).
 ## Step by step
 
 1. **Install.** `make install` installs the package with its dev and PII extras
-   and downloads the spaCy model Presidio uses. Copy `.env.example` to `.env` and
-   fill in your keys.
+   and installs spaCy's small `en_core_web_sm` model for Presidio. Copy
+   `.env.example` to `.env` and fill in your keys.
 2. **Bring up the stack.** `make db-up` starts Postgres with pgvector, a Llama
    Guard 4 model server, an OpenTelemetry collector, and Langfuse.
 3. **Ingest the knowledge base.** Add approved production documents to

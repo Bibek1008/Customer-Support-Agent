@@ -31,8 +31,8 @@ dependencies = [
 
 [project.optional-dependencies]
 free = ["fastembed>=0.7,<1"]
-# The spaCy model Presidio needs for its default NER recognizers. Installed
-# separately because it is a model download, not a PyPI dependency graph.
+# The small spaCy model used by Presidio is installed separately because it is
+# a model download, not a PyPI dependency graph. Install it during build/setup.
 pii = ["spacy>=3.7"]
 # Local (self-hosted) embedding option instead of the hosted default.
 local-embed = ["FlagEmbedding>=1.3", "torch>=2.3"]

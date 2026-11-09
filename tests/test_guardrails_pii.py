@@ -12,6 +12,7 @@ from support_agent.guardrails.pii import get_redactor
 
 
 def test_presidio_uses_the_small_installed_spacy_model(monkeypatch):
+    from support_agent.guardrails import pii
     from support_agent.guardrails.pii import PIIRedactor
 
     observed = {}
@@ -38,6 +39,10 @@ def test_presidio_uses_the_small_installed_spacy_model(monkeypatch):
     monkeypatch.setitem(sys.modules, "presidio_analyzer", presidio)
     monkeypatch.setitem(sys.modules, "presidio_analyzer.nlp_engine", nlp_engine)
     monkeypatch.setitem(sys.modules, "presidio_anonymizer", anonymizer)
+    requested_models = []
+    monkeypatch.setattr(
+        pii, "find_spec", lambda model_name: requested_models.append(model_name) or object()
+    )
 
     redactor = PIIRedactor.__new__(PIIRedactor)
     assert redactor._try_load_presidio()
@@ -45,8 +50,52 @@ def test_presidio_uses_the_small_installed_spacy_model(monkeypatch):
     assert observed["configuration"]["models"] == [
         {"lang_code": "en", "model_name": "en_core_web_sm"}
     ]
+    assert requested_models == ["en_core_web_sm"]
     assert observed["engine"] is engine
     assert observed["languages"] == ["en"]
+
+
+def test_missing_spacy_model_fails_without_attempting_model_download(monkeypatch):
+    from support_agent.guardrails import pii
+    from support_agent.guardrails.pii import PIIRedactor
+
+    class UnexpectedProvider:
+        def __init__(self, **kwargs):
+            pytest.fail("Presidio provider must not load or download a missing model")
+
+    presidio = ModuleType("presidio_analyzer")
+    presidio.AnalyzerEngine = object
+    nlp_engine = ModuleType("presidio_analyzer.nlp_engine")
+    nlp_engine.NlpEngineProvider = UnexpectedProvider
+    anonymizer = ModuleType("presidio_anonymizer")
+    anonymizer.AnonymizerEngine = object
+    monkeypatch.setitem(sys.modules, "presidio_analyzer", presidio)
+    monkeypatch.setitem(sys.modules, "presidio_analyzer.nlp_engine", nlp_engine)
+    monkeypatch.setitem(sys.modules, "presidio_anonymizer", anonymizer)
+    requested_models = []
+    monkeypatch.setattr(
+        pii, "find_spec", lambda model_name: requested_models.append(model_name) or None
+    )
+
+    redactor = PIIRedactor.__new__(PIIRedactor)
+    assert redactor._try_load_presidio() is False
+    assert requested_models == ["en_core_web_sm"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Email jane.doe@example.com", "<EMAIL_ADDRESS>"),
+        ("Call +1 212-555-0100", "<PHONE_NUMBER>"),
+        ("Card 4111 1111 1111 1111", "<CREDIT_CARD>"),
+        ("IP 192.0.2.44", "<IP_ADDRESS>"),
+        ("SSN 123-45-6789", "<US_SSN>"),
+    ],
+)
+def test_presidio_redacts_common_pii_types(text, expected):
+    result = get_redactor().redact(text)
+    assert expected in result.text
+    assert result.had_pii
 
 
 def test_email_and_card_are_redacted():
