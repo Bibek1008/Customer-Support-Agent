@@ -22,7 +22,7 @@ from support_agent.agent.loop import run_turn
 from support_agent.agent.models import classifier_kwargs, reasoner_kwargs
 from support_agent.config import get_settings
 from support_agent.observability.tracing import get_langfuse, shutdown_tracing
-from support_agent.schemas import Citation, DecisionType, Message
+from support_agent.schemas import ChatResponse, Message
 
 
 @asynccontextmanager
@@ -106,20 +106,6 @@ class ChatRequest(BaseModel):
     request_id: str | None = Field(default=None, pattern=r"^[0-9a-fA-F-]{36}$")
 
 
-class ChatResponse(BaseModel):
-    conversation_id: str
-    request_id: str | None = None
-    langfuse_trace_id: str | None = None
-    decision: DecisionType
-    answer: str
-    confidence: float
-    threshold: float
-    handoff: bool
-    ticket_id: str | None = None
-    citations: list[Citation] = Field(default_factory=list)
-    cost_usd: float = 0.0
-
-
 @app.get("/healthz")
 def healthz() -> dict:
     """Liveness check plus the model IDs the service is configured to use."""
@@ -148,20 +134,9 @@ def chat(req: ChatRequest, request: Request) -> ChatResponse:
         user_message=req.message,
         customer_id=req.customer_id,
     )
-    decision = trace.decision
-    assert decision is not None  # run_turn always sets a decision
-    return ChatResponse(
-        conversation_id=req.conversation_id,
-        langfuse_trace_id=trace.langfuse_trace_id,
-        decision=decision.type,
-        answer=decision.answer or "",
-        confidence=decision.confidence,
-        threshold=decision.threshold,
-        handoff=decision.type == DecisionType.HANDOFF,
-        ticket_id=decision.ticket_id,
-        citations=decision.citations,
-        cost_usd=trace.total_usd(),
-    )
+    from support_agent.agent.finalization import response_payload
+
+    return ChatResponse.model_validate(response_payload(trace))
 
 
 def _last_assistant(messages: list[Message]) -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from functools import lru_cache, wraps
@@ -80,7 +81,7 @@ def sanitize(value):
             if secret and len(secret) >= 8:
                 value = value.replace(secret, "<SECRET>")
         redactor = object.__new__(PIIRedactor)
-        return redactor._redact_regex(redactor._redact_ssn(value).text).text
+        return redactor._redact_regex(redactor._redact_ssn(value).text, mask_urls=False).text
     if isinstance(value, dict):
         return {
             str(key): (
@@ -100,6 +101,13 @@ def sanitize(value):
 
 
 def _sanitize_field(key, value):
+    if re.search(
+        r"(?:^|[._-])(?:authorization|password|passwd|api[_-]?key|access[_-]?token|"
+        r"refresh[_-]?token|client[_-]?secret|secret|token)$",
+        str(key),
+        re.IGNORECASE,
+    ):
+        return "<SECRET>"
     masked = sanitize(value)
     # Validated API identifiers can look like card numbers to regex masking.
     # Preserve only canonical UUID identifier fields, never arbitrary text or
@@ -127,9 +135,9 @@ def mask_otel_spans(*, params):
                 try:
                     decoded = json.loads(value)
                 except (ValueError, TypeError):
-                    masked = sanitize(value)
+                    masked = _sanitize_field(key, value)
                 else:
-                    masked = json.dumps(sanitize(decoded), ensure_ascii=False)
+                    masked = json.dumps(_sanitize_field(key, decoded), ensure_ascii=False)
                 if masked != value:
                     replacements[key] = masked
         if replacements:

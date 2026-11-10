@@ -22,7 +22,7 @@ def database(monkeypatch):
 
     from support_agent.config import get_settings
     from support_agent.db import close_pool, migrate
-    from tests.database_safety import test_database_parameters
+    from tests.database_safety import test_database_parameters, verify_database_identity
 
     # Never let opting in fall back to DATABASE_URL or a developer's .env.
     url = os.environ.get("SUPPORT_TEST_DATABASE_URL", "")
@@ -33,14 +33,9 @@ def database(monkeypatch):
     verified_url = make_conninfo(**target)
     try:
         with psycopg.connect(verified_url, connect_timeout=5) as conn:
-            actual = conn.execute(
-                "SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port()"
-            ).fetchone()
-            if actual != (target["dbname"], target["user"], target["host"], int(target["port"])):
-                pytest.fail(
-                    "Isolated test database identity did not match the explicit target",
-                    pytrace=False,
-                )
+            verify_database_identity(conn, target)
+    except ValueError as error:
+        pytest.fail(str(error), pytrace=False)
     except psycopg.Error as error:
         pytest.fail(
             f"Isolated PostgreSQL unavailable ({type(error).__name__}); no migrations executed",
@@ -62,6 +57,7 @@ def database(monkeypatch):
 
 def test_durable_chat_isolation_replay_history_and_staff_reply(database, monkeypatch):
     from support_agent import server
+    from support_agent.agent import loop
     from support_agent.db import close_pool, connection
     from support_agent.schemas import Decision, DecisionType, Message, Trace
     from support_agent.tools.handoff import escalate_to_human
@@ -86,7 +82,8 @@ def test_durable_chat_isolation_replay_history_and_staff_reply(database, monkeyp
             )
         return Trace(conversation_id=conversation_id, messages=messages, decision=decision)
 
-    monkeypatch.setattr(server, "run_turn", agent)
+    # Stub generation while retaining the real canonical release/serialization gate.
+    monkeypatch.setattr(loop, "_run_turn", agent)
     a, b = TestClient(server.app), TestClient(server.app)
     assert a.post("/api/session").status_code == 200
     assert b.post("/api/session").status_code == 200

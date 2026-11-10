@@ -15,7 +15,38 @@ from support_agent.repository import NotFoundError
 from support_agent.request_context import RequestContext, current_request
 from support_agent.tools import ticketing
 from tests.database_safety import test_database_parameters as database_parameters
+from tests.database_safety import verify_database_identity
 from tests.test_workflow_regressions import durable as durable  # noqa: PLC0414 - re-export shared pytest fixture
+
+
+@pytest.mark.parametrize(
+    "database,user,hostaddr,port,accepted",
+    [
+        ("support_test", "test", "127.0.0.1", 55432, True),
+        ("production", "test", "127.0.0.1", 55432, False),
+        ("support_test", "other", "127.0.0.1", 55432, False),
+        ("support_test", "test", "192.0.2.1", 55432, False),
+        ("support_test", "test", "127.0.0.1", 5432, False),
+    ],
+)
+def test_database_identity_checks_client_endpoint(database, user, hostaddr, port, accepted):
+    target = database_parameters(
+        "host=127.0.0.1 port=55432 dbname=support_test user=test password=test"
+    )
+
+    def execute(query):
+        # Server-side address/port can differ behind Docker forwarding.
+        assert query == "SELECT current_database(), current_user"
+        return SimpleNamespace(fetchone=lambda: (database, user))
+
+    connection = SimpleNamespace(
+        execute=execute, info=SimpleNamespace(hostaddr=hostaddr, port=port)
+    )
+    if accepted:
+        verify_database_identity(connection, target)
+    else:
+        with pytest.raises(ValueError, match="identity did not match"):
+            verify_database_identity(connection, target)
 
 
 @pytest.mark.parametrize("operation", ["read", "update", "create"])

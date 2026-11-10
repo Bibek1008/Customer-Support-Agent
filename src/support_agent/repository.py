@@ -170,7 +170,14 @@ class Repository:
     def complete_turn(
         self, conversation_id: str, request_id: str, response: dict, trace: dict, lease_token: str
     ) -> None:
-        response, trace = sanitize(response), sanitize(trace)
+        from support_agent.agent.finalization import FinalPayload
+
+        # The live API supplies canonical, validated JSON. Mask observability
+        # independently; changing customer content here would invalidate its gates.
+        response = (
+            response.verified_copy() if isinstance(response, FinalPayload) else sanitize(response)
+        )
+        trace = sanitize(trace)
         with connection() as conn:
             lease = conn.execute(
                 "SELECT 1 FROM support_conversations WHERE id=%s AND lease_token=%s FOR UPDATE",

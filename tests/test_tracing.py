@@ -53,7 +53,11 @@ def test_real_loop_export_hierarchy_usage_and_privacy(captured, make_client, mon
                 content=[TextBlock("Returns are allowed within 30 days.")], stop_reason="end_turn"
             ),
             FakeResponse(
-                content=[TextBlock('{"confidence":0.95,"reason":"Source supports answer"}')],
+                content=[
+                    TextBlock(
+                        '{"confidence":0.95,"reason":"Source supports answer","policy_consistent":true}'
+                    )
+                ],
                 stop_reason="end_turn",
             ),
         ]

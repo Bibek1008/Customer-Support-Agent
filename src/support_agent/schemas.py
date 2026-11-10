@@ -14,7 +14,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 def _now() -> datetime:
@@ -49,6 +49,8 @@ class Citation(BaseModel):
     url: str | None = None
     chunk: str
     score: float = Field(ge=0.0, le=1.0, description="Retrieval similarity, 0..1")
+    # Set only at the server-side KB retrieval boundary; never accepted from JSON.
+    _approved_kb: bool = PrivateAttr(default=False)
 
 
 class TicketStatus(str, Enum):
@@ -115,6 +117,20 @@ class Decision(BaseModel):
     ticket_id: str | None = None
 
 
+class ChatResponse(BaseModel):
+    conversation_id: str
+    request_id: str | None = None
+    langfuse_trace_id: str | None = None
+    decision: DecisionType
+    answer: str
+    confidence: float
+    threshold: float
+    handoff: bool
+    ticket_id: str | None = None
+    citations: list[Citation] = Field(default_factory=list)
+    cost_usd: float = 0.0
+
+
 class Trace(BaseModel):
     """The full record of one conversation turn through the agent."""
 
@@ -127,6 +143,8 @@ class Trace(BaseModel):
     created_ticket_id: str | None = None
     total_cost: CostRecord | None = None
     created_at: datetime = Field(default_factory=_now)
+    _validated_content: str | None = PrivateAttr(default=None)
+    _canonical_response: ChatResponse | None = PrivateAttr(default=None)
 
     def total_usd(self) -> float:
         """Sum the dollar cost across every model call in the run."""

@@ -16,6 +16,8 @@ from tests.conftest import FakeResponse, TextBlock, ToolUseBlock
 
 
 class _Conf:
+    policy_consistent = True
+
     def __init__(self, score: float):
         self.score = score
         self.reason = "test"

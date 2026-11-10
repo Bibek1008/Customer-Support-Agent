@@ -24,6 +24,16 @@ import re
 from types import SimpleNamespace
 
 from support_agent.agent.confidence import decide_handoff, score_confidence
+from support_agent.agent.finalization import (
+    FinalizationError,
+    assert_finalized,
+    citation_safety_text,
+    content_signature,
+    prepare_decision,
+    prepare_response,
+    sanitize_citations,
+    seal_decision,
+)
 from support_agent.agent.models import get_client, reasoner_kwargs
 from support_agent.agent.prompts import SYSTEM_PROMPT
 from support_agent.config import get_settings
@@ -61,6 +71,28 @@ from support_agent.tools.registry import TOOL_SCHEMAS, ToolOutcome, dispatch
 
 @trace_turn
 def run_turn(
+    conversation_id: str,
+    user_message: str,
+    customer_id: str | None = None,
+    history: list[Message] | None = None,
+) -> Trace:
+    """Release only canonical, safety-validated customer content on every route."""
+    trace = _run_turn(conversation_id, user_message, customer_id, history)
+    if trace._validated_content is None:
+        if trace.decision is None:
+            raise FinalizationError("No decision was produced.")
+        decision = prepare_decision(trace.decision)
+        prepare_response(trace, decision)
+        if not _response_safe(trace, decision):
+            raise FinalizationError("Final response failed assistant safety validation.")
+        seal_decision(trace, decision)
+        if trace.messages and trace.messages[-1].role == Role.ASSISTANT:
+            trace.messages[-1].content = decision.answer or ""
+    assert_finalized(trace)
+    return trace
+
+
+def _run_turn(
     conversation_id: str,
     user_message: str,
     customer_id: str | None = None,
@@ -250,7 +282,11 @@ def run_turn(
                 handoff_reason = outcome.handoff_reason
             citations.extend(_redact_citations(outcome.citations))
             redactor = get_redactor()
-            safe_tool_output = redactor.redact(outcome.text or "(no output)").text
+            safe_tool_output = redactor.redact(
+                outcome.text or "(no output)",
+                approved_policy=block.name == "knowledge_base"
+                and any(c._approved_kb for c in outcome.citations),
+            ).text
             quarantined = quarantine_tool_output(block.name, safe_tool_output)
             tool_results.append(
                 {
@@ -264,6 +300,7 @@ def run_turn(
         if handoff_reason is not None or trace.created_ticket_id is not None:
             break
 
+    generated_draft = answer_text
     # Some compatible models answer without invoking the read-only KB tool.
     # Retry retrieval deterministically before abstaining; only return a source
     # excerpt when the normal retrieval filters produce a relevant citation.
@@ -284,6 +321,7 @@ def run_turn(
         citations=_dedupe(citations),
         handoff_reason=handoff_reason,
         customer_id=customer_id,
+        generated_draft=generated_draft,
     )
     trace.total_cost = None  # per-span costs are the source of truth
     return trace
@@ -332,18 +370,7 @@ def _run_tool(block, trace: Trace, *, allow_ticket_creation: bool = False):
 
 
 def _redact_citations(citations: list[Citation]) -> list[Citation]:
-    redactor = get_redactor()
-    return [
-        citation.model_copy(
-            update={
-                "source_id": redactor.redact(citation.source_id).text,
-                "source_title": redactor.redact(citation.source_title).text,
-                "url": redactor.redact(citation.url).text if citation.url is not None else None,
-                "chunk": redactor.redact(citation.chunk).text,
-            }
-        )
-        for citation in citations
-    ]
+    return sanitize_citations(citations)
 
 
 def _finalize(
@@ -352,11 +379,15 @@ def _finalize(
     citations: list[Citation],
     handoff_reason: str | None,
     customer_id: str | None,
+    generated_draft: str | None = None,
 ) -> Decision:
     settings = get_settings()
     if trace.created_ticket_id is not None:
         return _ticket_confirmation(trace, trace.created_ticket_id, reused=False)
     question = next((m.content for m in reversed(trace.messages) if m.role == Role.USER), "")
+    draft = (
+        get_redactor().redact(generated_draft if generated_draft is not None else answer_text).text
+    )
 
     # A missing answer or evidence is not permission to open a staff ticket.
     # Explicit human requests and verification-required actions route earlier.
@@ -379,7 +410,6 @@ def _finalize(
         citations = [source]
         # A matching quotation can still be irrelevant. Judge it against the
         # customer's actual question before releasing the excerpt.
-        conf = score_confidence(question=question, answer=answer_text, citations=citations)
     else:
         # Writing tools can only create/update tickets. A model must not claim
         # refunds, password changes, or invented ticket IDs as completed actions.
@@ -396,22 +426,45 @@ def _finalize(
                 settings.handoff_threshold,
                 customer_id,
             )
-        conf = score_confidence(question=question, answer=answer_text, citations=citations)
+    # Construct the canonical payload before confidence or assistant safety.
+    decision = prepare_decision(
+        Decision(
+            type=DecisionType.ANSWER,
+            answer=answer_text,
+            citations=citations,
+            confidence=0.0,
+            threshold=settings.handoff_threshold,
+        )
+    )
+    _record_finalization(
+        trace,
+        draft,
+        decision,
+        settings.answer_mode,
+        retrieval_fallback=generated_draft is not None and generated_draft != answer_text,
+    )
+    prepare_response(trace, decision)
+    prepared_content = content_signature(decision)
+    conf = score_confidence(question=question, answer=decision.answer, citations=decision.citations)
     trace.spans.append(
         SpanRecord(
             name="confidence",
             kind="model",
             cost=getattr(conf, "cost_record", None),
-            attributes={"score": conf.score, "reason": conf.reason},
+            attributes={
+                "score": conf.score,
+                "reason": sanitize(conf.reason),
+                "policy_consistent": getattr(conf, "policy_consistent", False),
+                "evaluated_answer": decision.answer,
+            },
         )
     )
     decision_hint = decide_handoff(conf.score, settings.handoff_threshold)
-    if decision_hint.handoff:
+    if decision_hint.handoff or getattr(conf, "policy_consistent", None) is not True:
         return _unknown(trace, "The sources did not establish a relevant, supported answer.")
 
     # Above tau*: gate the answer with the safety classifier, then return it.
-    response_gate = refusal.check_response(answer_text)
-    if response_gate.refuse:
+    if not _response_safe(trace, decision):
         return _handoff(
             trace=trace,
             reason="drafted answer failed the response safety check",
@@ -420,14 +473,51 @@ def _finalize(
             customer_id=customer_id,
         )
 
-    answer_text = get_redactor().redact(answer_text).text
-    trace.messages.append(Message(role=Role.ASSISTANT, content=answer_text))
-    return Decision(
-        type=DecisionType.ANSWER,
-        answer=answer_text,
-        confidence=conf.score,
-        threshold=decision_hint.threshold,
-        citations=citations,
+    decision.confidence = conf.score
+    decision.threshold = decision_hint.threshold
+    trace.messages.append(Message(role=Role.ASSISTANT, content=decision.answer))
+    if content_signature(decision) != prepared_content:
+        raise FinalizationError("Evaluated customer content changed during validation.")
+    return seal_decision(trace, decision)
+
+
+def _response_safe(trace: Trace, decision: Decision) -> bool:
+    expected = content_signature(decision)
+    passed = not refusal.check_response(decision.answer or "").refuse
+    if passed and decision.citations:
+        passed = not refusal.check_response(citation_safety_text(decision)).refuse
+    if content_signature(decision) != expected:
+        raise FinalizationError("Customer content changed during safety validation.")
+    with guardrail_span("final_response_safety") as span:
+        span.set("final_response.safe", passed)
+    trace.spans.append(
+        SpanRecord(
+            name="final_response_safety",
+            kind="guardrail",
+            attributes={"safe": passed, "evaluated_answer": decision.answer},
+        )
+    )
+    return passed
+
+
+def _record_finalization(
+    trace: Trace, draft: str, decision: Decision, mode: str, *, retrieval_fallback: bool = False
+) -> None:
+    attributes = {
+        "answer_mode": mode,
+        "generated_draft": sanitize(draft),
+        "final_answer": decision.answer,
+        "replacement_reason": "Approved source excerpt selected by extractive mode."
+        if mode == "extractive"
+        else "Approved source excerpt selected by retrieval fallback."
+        if retrieval_fallback
+        else None,
+    }
+    with guardrail_span("response_finalization") as span:
+        for key, value in attributes.items():
+            span.set(key, value)
+    trace.spans.append(
+        SpanRecord(name="response_finalization", kind="guardrail", attributes=attributes)
     )
 
 
