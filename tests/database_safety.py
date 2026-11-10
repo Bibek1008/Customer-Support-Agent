@@ -29,3 +29,16 @@ def test_database_parameters(url: str) -> dict:
     # Prevent inherited PGHOSTADDR from redirecting even an explicit local host.
     parameters["hostaddr"] = parameters["host"]
     return parameters
+
+
+def verify_database_identity(connection, target: dict) -> None:
+    """Check the client endpoint and server identity across local port forwarding."""
+    actual = connection.execute("SELECT current_database(), current_user").fetchone()
+    # inet_server_addr()/port() describe the container side of a forwarded
+    # connection. libpq reports the endpoint that this client actually used.
+    if (
+        actual != (target["dbname"], target["user"])
+        or connection.info.hostaddr != target["hostaddr"]
+        or connection.info.port != int(target["port"])
+    ):
+        raise ValueError("Isolated test database identity did not match the explicit target")
