@@ -62,6 +62,7 @@ def database(monkeypatch):
 
 def test_durable_chat_isolation_replay_history_and_staff_reply(database, monkeypatch):
     from support_agent import server
+    from support_agent.agent import loop
     from support_agent.db import close_pool, connection
     from support_agent.schemas import Decision, DecisionType, Message, Trace
     from support_agent.tools.handoff import escalate_to_human
@@ -86,7 +87,8 @@ def test_durable_chat_isolation_replay_history_and_staff_reply(database, monkeyp
             )
         return Trace(conversation_id=conversation_id, messages=messages, decision=decision)
 
-    monkeypatch.setattr(server, "run_turn", agent)
+    # Stub generation while retaining the real canonical release/serialization gate.
+    monkeypatch.setattr(loop, "_run_turn", agent)
     a, b = TestClient(server.app), TestClient(server.app)
     assert a.post("/api/session").status_code == 200
     assert b.post("/api/session").status_code == 200

@@ -52,12 +52,20 @@ def test_unsafe_input_reaches_dedicated_safety_before_any_routing(
     monkeypatch, safety_provider, message, category
 ):
     def unsafe(url, **kwargs):
-        safety_provider.append(json.loads(kwargs["json"]["messages"][-1]["content"]))
+        payload = json.loads(kwargs["json"]["messages"][-1]["content"])
+        safety_provider.append(payload)
+        safe = payload["role"] == "assistant"
         return httpx.Response(
             200,
             json={
                 "choices": [
-                    {"message": {"content": json.dumps({"safe": False, "categories": [category]})}}
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {"safe": safe, "categories": [] if safe else [category]}
+                            )
+                        }
+                    }
                 ]
             },
             request=httpx.Request("POST", url),
@@ -69,11 +77,12 @@ def test_unsafe_input_reaches_dedicated_safety_before_any_routing(
     monkeypatch.setattr(ticketing, "_backend", lambda: pytest.fail("No ticket for unsafe input"))
     with capture_events() as events:
         trace = loop.run_turn("unsafe", message)
-    assert len(safety_provider) == 1
+    assert len(safety_provider) == 2
     assert safety_provider[0]["role"] == "user"
+    assert safety_provider[1] == {"role": "assistant", "content": trace.decision.answer}
     assert "can't help" in trace.decision.answer
     assert trace.decision.ticket_id is None
-    assert [e["check"] for e in events if e["check"] in ("safety", "refusal_input")] == [
+    assert [e["check"] for e in events if e["check"] in ("safety", "refusal_input")][:2] == [
         "safety",
         "refusal_input",
     ]
@@ -103,7 +112,8 @@ def test_controlled_routes_check_redacted_input_once_before_intent(
     monkeypatch.setattr(loop, "classify_intent", classify)
     monkeypatch.setattr(loop, "get_client", lambda: pytest.fail("No reasoner on controlled route"))
     trace = loop.run_turn("safe-route", "Hello, contact jane@example.com")
-    assert len(safety_provider) == 1
+    assert len(safety_provider) == 2
+    assert safety_provider[1] == {"role": "assistant", "content": trace.decision.answer}
     assert "jane@example.com" not in safety_provider[0]["content"]
     assert trace.decision.ticket_id is None
 
@@ -150,7 +160,11 @@ def test_support_flow_checks_both_input_and_generated_response(
     def verdict(url, **kwargs):
         payload = json.loads(kwargs["json"]["messages"][-1]["content"])
         calls.append(payload["role"])
-        safe = payload["role"] == "user" or output_safe
+        safe = (
+            payload["role"] == "user"
+            or output_safe
+            or payload["content"] != "Return unused items within 30 days."
+        )
         return httpx.Response(
             200,
             json={
@@ -188,7 +202,8 @@ def test_support_flow_checks_both_input_and_generated_response(
         loop, "score_confidence", lambda **_: ConfidenceResult(score=0.9, reason="Supported")
     )
     trace = loop.run_turn("support", "What is your return policy?")
-    assert calls == ["user", "assistant"]
+    # Validate the answer, then either its citations or the safe handoff reply.
+    assert calls == ["user", "assistant", "assistant"]
     assert trace.decision.type == (DecisionType.ANSWER if output_safe else DecisionType.HANDOFF)
     if output_safe:
         assert trace.decision.citations

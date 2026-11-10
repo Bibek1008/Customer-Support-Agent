@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.util import find_spec
 
+from support_agent.guardrails.redaction import URL_PATTERN, redact_secrets
 from support_agent.observability.tracing import guardrail_span
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,6 +62,7 @@ _AMBIGUOUS_NUMERIC_ENTITIES = {
     "US_DRIVER_LICENSE",
 }
 _INTERNAL_TICKET_ID = re.compile(r"\btkt_[a-f0-9]{12}\b")
+_POLICY_RECURRENCE = re.compile(r"\bthe same day each month\b", re.IGNORECASE)
 
 
 @dataclass
@@ -116,15 +118,17 @@ class PIIRedactor:
             )
             return False
 
-    def redact(self, text: str) -> RedactionResult:
+    def redact(self, text: str, *, approved_policy: bool = False) -> RedactionResult:
         """Return the text with PII replaced by typed placeholders."""
         if not text:
             return RedactionResult(text=text, entities=[])
         with guardrail_span("pii") as span:
+            original = text
+            text = redact_secrets(text)
             ssn_result = self._redact_ssn(text)
             try:
                 result = (
-                    self._redact_presidio(ssn_result.text)
+                    self._redact_presidio(ssn_result.text, approved_policy=approved_policy)
                     if self._presidio
                     else self._redact_regex(ssn_result.text)
                 )
@@ -136,11 +140,13 @@ class PIIRedactor:
                 )
                 result = self._redact_regex(ssn_result.text)
             result.entities = list(dict.fromkeys(ssn_result.entities + result.entities))
+            if original != text:
+                result.entities.append("SECRET")
             span.set("guardrail.pii.entities", ",".join(sorted(set(result.entities))))
             span.set("guardrail.pii.had_pii", result.had_pii)
             return result
 
-    def _redact_presidio(self, text: str) -> RedactionResult:
+    def _redact_presidio(self, text: str, *, approved_policy: bool = False) -> RedactionResult:
         from presidio_anonymizer.entities import OperatorConfig
 
         # Presidio debug logs can include the analyzed text; never emit it.
@@ -156,6 +162,14 @@ class PIIRedactor:
                     result.entity_type,
                     result.start,
                     result.end,
+                )
+                and not (
+                    approved_policy
+                    and result.entity_type == "DATE_TIME"
+                    and any(
+                        match.start() <= result.start and result.end <= match.end()
+                        for match in _POLICY_RECURRENCE.finditer(text)
+                    )
                 )
                 # The small spaCy model frequently labels ordinary words and
                 # acronyms as organizations. Company names aren't personal
@@ -218,9 +232,14 @@ class PIIRedactor:
             entities=list(dict.fromkeys(entities)),
         )
 
-    def _redact_regex(self, text: str) -> RedactionResult:
+    def _redact_regex(self, text: str, *, mask_urls: bool = True) -> RedactionResult:
         entities: list[str] = []
-        redacted = text
+        redacted = redact_secrets(text)
+        if redacted != text:
+            entities.append("SECRET")
+        if mask_urls and URL_PATTERN.search(redacted):
+            redacted = URL_PATTERN.sub("<URL>", redacted)
+            entities.append("URL")
         for label, pattern in _FALLBACK_PATTERNS:
             if pattern.search(redacted):
                 entities.append(label)

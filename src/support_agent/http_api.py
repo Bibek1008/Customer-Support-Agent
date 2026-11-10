@@ -22,6 +22,7 @@ from psycopg_pool import PoolTimeout
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from support_agent.agent.finalization import FinalizationError, response_payload
 from support_agent.config import get_settings
 from support_agent.db import DatabaseSchemaError, check_database, check_production_readiness
 from support_agent.guardrails.pii import get_redactor
@@ -39,7 +40,7 @@ from support_agent.request_context import (
     current_request,
     remaining_timeout,
 )
-from support_agent.schemas import DecisionType, Message, TicketStatus
+from support_agent.schemas import Message, TicketStatus
 
 LOGGER = logging.getLogger(__name__)
 WEB = Path(__file__).resolve().parents[2] / "website"
@@ -300,21 +301,13 @@ def durable_chat(req, request, run_turn):
         d = trace.decision
         if d is None:
             raise RuntimeError("Agent did not produce a decision")
-        result = {
-            "conversation_id": req.conversation_id,
-            "request_id": request_id,
-            "langfuse_trace_id": trace.langfuse_trace_id,
-            "decision": d.type.value,
-            "answer": get_redactor().redact(d.answer or "").text,
-            "confidence": d.confidence,
-            "threshold": d.threshold,
-            "handoff": d.type == DecisionType.HANDOFF,
-            "ticket_id": d.ticket_id,
-            "citations": [c.model_dump(mode="json") for c in d.citations],
-            "cost_usd": round(
+        result = response_payload(
+            trace,
+            request_id=request_id,
+            cost_usd=round(
                 trace.total_usd() + sum(e.get("guardrail.safety.cost_usd", 0) for e in events), 6
             ),
-        }
+        )
         repo.complete_turn(
             req.conversation_id,
             request_id,
@@ -322,7 +315,7 @@ def durable_chat(req, request, run_turn):
             {**trace.model_dump(mode="json"), "guardrails": events},
             lease_token,
         )
-        return result
+        return result.verified_copy()
     except Exception as error:
         try:
             failed_trace = trace.model_dump(mode="json") if trace is not None else {}
@@ -392,6 +385,14 @@ def install(app):
     settings = get_settings()
     app.include_router(router)
     app.add_middleware(BodyLimitMiddleware)
+
+    @app.exception_handler(FinalizationError)
+    async def finalization_unavailable(request, error):
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Response validation failed. Please retry the same request."},
+        )
+
     if settings.app_env == "production":
         app.add_middleware(
             TrustedHostMiddleware, allowed_hosts=[urlparse(settings.app_origin).hostname]

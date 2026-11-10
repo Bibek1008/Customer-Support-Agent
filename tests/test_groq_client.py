@@ -65,7 +65,11 @@ def test_groq_tool_roundtrip_and_structured_confidence(monkeypatch):
                 "tool_calls",
             ),
             _response({"content": "Return within 30 days."}),
-            _response({"content": '{"confidence":0.95,"reason":"Supported by source"}'}),
+            _response(
+                {
+                    "content": '{"confidence":0.95,"reason":"Supported by source","policy_consistent":true}'
+                }
+            ),
         ]
     )
     requests = []

@@ -96,6 +96,7 @@ def search_knowledge_base(query: str, k: int = 4) -> KBResult:
             chunk=hit.text,
             score=hit.score,
         )
+        citation._approved_kb = True
         citations.append(citation)
         lines.append(f"[{i + 1}] {hit.source_title} (score {hit.score:.2f})\n{hit.text}")
 

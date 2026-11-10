@@ -77,6 +77,8 @@ def test_injected_tool_result_does_not_trigger_unsanctioned_call(make_client, mo
 
 
 class _Conf:
+    policy_consistent = True
+
     def __init__(self, score: float):
         self.score = score
         self.reason = "test"

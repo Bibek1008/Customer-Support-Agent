@@ -238,6 +238,8 @@ def test_redacted_text_is_stored_and_sent_to_model(make_client, monkeypatch, cap
 
 
 class _Conf:
+    policy_consistent = True
+
     def __init__(self, score: float):
         self.score = score
         self.reason = "test"
