@@ -104,7 +104,11 @@ production-support-agent/
 
 ---
 
-## 2. Website content spine (single-file `website/index.html`)
+## 2. Original website content spine (historical)
+
+The original single-file capstone landing page has been removed. The deployed
+customer chat and staff inbox now live in `frontend/` (Next.js on Vercel).
+The content outline below records the original specification for reference.
 
 Fixed order, each section led by an eyebrow label, matching the house deep-site pattern.
 

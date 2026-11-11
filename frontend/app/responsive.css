@@ -1,0 +1,114 @@
+/* Shared sizing: allow grid/flex children to shrink and keep controls usable. */
+html { scrollbar-gutter: stable; }
+.shell { padding-inline: max(24px, env(safe-area-inset-left)) max(24px, env(safe-area-inset-right)); }
+.workspace, .sidebar, .chat-heading > div, .staff-header > div,
+.card, .result, .source { min-width: 0; }
+.brand, .avatar, .logo, .send { flex-shrink: 0; }
+.connection { min-width: 0; overflow-wrap: anywhere; }
+.chat-heading, .composer { flex-shrink: 0; }
+.chat-heading > div:nth-child(2) { flex: 1; }
+.messages { min-height: 0; scrollbar-width: thin; }
+.chat-panel { height: clamp(520px, 76dvh, 860px); }
+.send { width: 44px; height: 44px; }
+.subtle, .topics button, .actions button, .primary, .actions select { min-height: 44px; }
+.bubble { font-size: 14px; }
+.message-label, .chat-heading span, .badge, .compose-hint, footer { font-size: 12px; }
+.result details, .section-label { font-size: 12px; }
+.source, .badge, footer > span, .card h2, .muted, .error { overflow-wrap: anywhere; }
+.error { max-height: 160px; overflow-y: auto; flex-shrink: 0; }
+.error button { min-height: 44px; }
+.card pre, .report { max-width: 100%; overflow-x: auto; }
+.staff-header a, footer a { flex-shrink: 0; padding-block: 10px; }
+.staff-shell input, .staff-shell textarea, .staff-shell select { font-size: 16px; }
+.input-wrap textarea { font-size: 16px; resize: none; }
+footer { align-items: center; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+
+/* Wide desktops keep a readable chat width instead of stretching the text. */
+@media (min-width: 1101px) {
+  .shell { padding-inline: 42px; }
+  .workspace { grid-template-columns: 300px minmax(0, 1fr); gap: 48px; padding-top: 40px; }
+  .message { max-width: min(90%, 60ch); }
+  .message.user { max-width: min(85%, 54ch); }
+}
+
+/* Tablets and smaller laptops: retain the sidebar without squeezing chat. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .topbar { height: auto; min-height: 88px; padding-block: 18px; }
+  .workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 24px; padding-block: 30px; }
+  .sidebar { padding-top: 8px; }
+  .sidebar h1 { font-size: 38px; letter-spacing: -1.3px; }
+  .sidebar > p { font-size: 13px; }
+  .topics { display: grid; margin-top: 26px; }
+  .topics button { padding: 11px; font-size: 13px; }
+  .chat-heading { flex-wrap: wrap; padding: 16px; }
+  .chat-heading span { font-size: 11px; }
+  .chat-heading .subtle { font-size: 12px; padding: 8px; }
+  .messages { padding: 18px; }
+  .composer { padding: 14px; }
+  .compose-hint { font-size: 10px; }
+  .chat-panel { height: clamp(520px, 78dvh, 800px); }
+}
+
+/* Phones: compact topic shortcuts above the chat, with no large hero to scroll past. */
+@media (max-width: 760px) {
+  html { scrollbar-gutter: auto; }
+  .shell { padding-inline: max(12px, env(safe-area-inset-left)) max(12px, env(safe-area-inset-right)); }
+  .topbar { height: auto; min-height: 76px; flex-wrap: wrap; gap: 8px 16px; padding-block: 12px; }
+  .brand { font-size: 17px; gap: 9px; }
+  .logo { width: 34px; height: 34px; font-size: 30px; }
+  .connection { font-size: 12px; max-width: none; flex: 1 1 150px; justify-content: flex-end; }
+  .workspace { display: flex; flex-direction: column; gap: 14px; padding-block: 14px; }
+  .sidebar { padding: 0; }
+  .sidebar .eyebrow, .sidebar h1, .sidebar > p, .assurance, .section-label { display: none; }
+  .topics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+  .topics button { min-width: 0; min-height: 46px; padding: 10px; font-size: 13px; line-height: 1.35; gap: 8px; }
+  .topic-icon { font-size: 18px; flex-shrink: 0; width: 20px; }
+  .topics .arrow { display: none; }
+  .chat-panel { height: max(390px, calc(100svh - 248px)); border-radius: 12px; }
+  .chat-heading { flex-wrap: nowrap; padding: 12px; gap: 9px; }
+  .avatar { width: 34px; height: 34px; font-size: 22px; }
+  .chat-heading strong { font-size: 14px; }
+  .chat-heading span { font-size: 11px; line-height: 1.4; }
+  .chat-heading .subtle { padding: 8px; font-size: 12px; }
+  .messages { padding: 16px 12px; }
+  .message { max-width: 100%; margin-bottom: 20px; }
+  .message.user { max-width: 92%; }
+  .message-label { font-size: 12px; }
+  .bubble { padding: 12px 14px; font-size: 15px; line-height: 1.65; }
+  .result details { font-size: 13px; }
+  .badge { font-size: 11px; }
+  .composer { padding: 12px; }
+  .input-wrap { padding: 8px; gap: 8px; }
+  .input-wrap textarea { height: 56px; min-height: 44px; line-height: 1.5; }
+  .compose-hint { gap: 12px; font-size: 10px; line-height: 1.4; }
+  .compose-hint > span:last-child { flex-shrink: 0; }
+  .error { margin: 0 12px 10px; font-size: 13px; max-height: 100px; }
+  footer { flex-wrap: wrap; gap: 4px 16px; font-size: 11px; padding-top: 10px; }
+  footer > span { flex: 1 1 210px; }
+  .staff-shell { padding: max(18px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom)); }
+  .staff-header { flex-wrap: wrap; gap: 0 16px; }
+  .staff-header h1 { font-size: 30px; margin: 12px 0; }
+  .staff-header p { margin: 0; }
+  .card { padding: 16px; margin-block: 16px; }
+  .card pre, .report { padding: 12px; }
+  .actions { gap: 8px; }
+  .actions button, .actions select { flex: 1 1 130px; font-size: 14px; }
+  .login .primary { width: 100%; font-size: 16px; }
+}
+
+/* Small phones and enlarged text: place connection status on its own line. */
+@media (max-width: 380px) {
+  .connection { flex-basis: 100%; justify-content: flex-start; }
+  .topics button { font-size: 12px; gap: 5px; padding: 8px; }
+  .chat-heading { gap: 7px; padding: 10px; }
+  .chat-heading .avatar { display: none; }
+  .chat-heading span { font-size: 10px; }
+  .chat-panel { height: max(380px, calc(100svh - 270px)); }
+}
+
+/* Short landscape screens scroll as a page while keeping a useful message area. */
+@media (max-height: 500px) and (max-width: 1000px) {
+  .topbar { min-height: 64px; }
+  .workspace { padding-block: 12px; }
+  .chat-panel { height: 440px; }
+}
