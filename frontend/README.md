@@ -2,6 +2,12 @@
 
 Next.js App Router, React, and TypeScript frontend for the existing FastAPI backend on Render. Includes customer chat, saved conversations, citations, human handoff, staff replies, staff inbox, ticket status updates, and evaluation/activity reports.
 
+Live customer chat: https://customer-support-agent-c28c.vercel.app/
+
+Live staff inbox: https://customer-support-agent-c28c.vercel.app/admin/inbox
+
+Backend: https://customer-support-agent-k21j.onrender.com
+
 ## Local development
 
 Use Node.js 20.9 or newer (Node 24 recommended).
